@@ -1,10 +1,11 @@
 use async_trait::async_trait;
-use sqlx::{PgPool, Row};
+use sqlx::{PgPool, Postgres, QueryBuilder, Row};
 
 use super::{
     ProviderQuotaReadRepository, ProviderQuotaWriteRepository, StoredProviderQuotaSnapshot,
 };
 use crate::{error::SqlxResultExt, DataLayerError};
+use aether_data_query::{push_in, WhereClause};
 
 const FIND_BY_PROVIDER_ID_SQL: &str = r#"
 SELECT
@@ -19,21 +20,6 @@ SELECT
 FROM providers
 WHERE id = $1
 LIMIT 1
-"#;
-
-const FIND_BY_PROVIDER_IDS_SQL: &str = r#"
-SELECT
-  id AS provider_id,
-  CAST(billing_type AS TEXT) AS billing_type,
-  CAST(monthly_quota_usd AS DOUBLE PRECISION) AS monthly_quota_usd,
-  CAST(COALESCE(monthly_used_usd, 0) AS DOUBLE PRECISION) AS monthly_used_usd,
-  quota_reset_day,
-  CAST(EXTRACT(EPOCH FROM quota_last_reset_at) AS BIGINT) AS quota_last_reset_at_unix_secs,
-  CAST(EXTRACT(EPOCH FROM quota_expires_at) AS BIGINT) AS quota_expires_at_unix_secs,
-  is_active
-FROM providers
-WHERE id = ANY($1::TEXT[])
-ORDER BY id ASC
 "#;
 
 const RESET_DUE_SQL: &str = r#"
@@ -83,9 +69,14 @@ impl ProviderQuotaReadRepository for SqlxProviderQuotaRepository {
         if provider_ids.is_empty() {
             return Ok(Vec::new());
         }
-
-        sqlx::query(FIND_BY_PROVIDER_IDS_SQL)
-            .bind(provider_ids)
+        let mut builder = QueryBuilder::<Postgres>::new(
+            "SELECT id AS provider_id, CAST(billing_type AS TEXT) AS billing_type, CAST(monthly_quota_usd AS DOUBLE PRECISION) AS monthly_quota_usd, CAST(COALESCE(monthly_used_usd, 0) AS DOUBLE PRECISION) AS monthly_used_usd, quota_reset_day, CAST(EXTRACT(EPOCH FROM quota_last_reset_at) AS BIGINT) AS quota_last_reset_at_unix_secs, CAST(EXTRACT(EPOCH FROM quota_expires_at) AS BIGINT) AS quota_expires_at_unix_secs, is_active FROM providers",
+        );
+        let mut where_clause = WhereClause::new();
+        push_in(&mut builder, &mut where_clause, "id", provider_ids);
+        builder.push(" ORDER BY id ASC");
+        builder
+            .build()
             .fetch_all(&self.pool)
             .await
             .map_postgres_err()?

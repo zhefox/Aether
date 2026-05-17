@@ -1,0 +1,363 @@
+use sqlx::{Database, Encode, QueryBuilder, Type};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SqlDialect {
+    Postgres,
+    Sqlite,
+    Mysql,
+}
+
+impl SqlDialect {
+    pub fn quote_ident(self, ident: &str) -> String {
+        let quote = match self {
+            Self::Postgres | Self::Sqlite => '"',
+            Self::Mysql => '`',
+        };
+        let escaped = ident.replace(quote, &format!("{quote}{quote}"));
+        format!("{quote}{escaped}{quote}")
+    }
+
+    pub fn quote_path(self, parts: &[&str]) -> String {
+        parts
+            .iter()
+            .map(|part| self.quote_ident(part))
+            .collect::<Vec<_>>()
+            .join(".")
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct WhereClause {
+    has_clause: bool,
+}
+
+impl WhereClause {
+    pub fn new() -> Self {
+        Self { has_clause: false }
+    }
+
+    pub fn with_existing_clause() -> Self {
+        Self { has_clause: true }
+    }
+
+    pub fn is_empty(self) -> bool {
+        !self.has_clause
+    }
+
+    pub fn push_next<DB>(&mut self, builder: &mut QueryBuilder<'_, DB>)
+    where
+        DB: Database,
+    {
+        if self.has_clause {
+            builder.push(" AND ");
+        } else {
+            builder.push(" WHERE ");
+            self.has_clause = true;
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SortDirection {
+    Asc,
+    Desc,
+}
+
+impl SortDirection {
+    pub fn sql(self) -> &'static str {
+        match self {
+            Self::Asc => "ASC",
+            Self::Desc => "DESC",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OrderByColumn<'a> {
+    pub key: &'a str,
+    pub sql: &'a str,
+}
+
+pub fn push_eq<'args, DB, T>(
+    builder: &mut QueryBuilder<'args, DB>,
+    where_clause: &mut WhereClause,
+    column_sql: &str,
+    value: T,
+) where
+    DB: Database,
+    T: 'args + Encode<'args, DB> + Type<DB>,
+{
+    where_clause.push_next(builder);
+    builder.push(column_sql).push(" = ").push_bind(value);
+}
+
+pub fn push_optional_eq<'args, DB, T>(
+    builder: &mut QueryBuilder<'args, DB>,
+    where_clause: &mut WhereClause,
+    column_sql: &str,
+    value: Option<T>,
+) where
+    DB: Database,
+    T: 'args + Encode<'args, DB> + Type<DB>,
+{
+    if let Some(value) = value {
+        push_eq(builder, where_clause, column_sql, value);
+    }
+}
+
+pub fn push_in<'args, DB, T>(
+    builder: &mut QueryBuilder<'args, DB>,
+    where_clause: &mut WhereClause,
+    column_sql: &str,
+    values: &[T],
+) where
+    DB: Database,
+    T: Clone + 'args + Encode<'args, DB> + Type<DB>,
+{
+    where_clause.push_next(builder);
+    builder.push(column_sql).push(" IN (");
+    {
+        let mut separated = builder.separated(", ");
+        for value in values {
+            separated.push_bind(value.clone());
+        }
+    }
+    builder.push(")");
+}
+
+pub fn push_ci_contains<'args, DB>(
+    builder: &mut QueryBuilder<'args, DB>,
+    where_clause: &mut WhereClause,
+    dialect: SqlDialect,
+    column_sql: &str,
+    value: &str,
+) where
+    DB: Database,
+    String: 'args + Encode<'args, DB> + Type<DB>,
+{
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return;
+    }
+
+    where_clause.push_next(builder);
+    push_ci_contains_predicate(builder, dialect, column_sql, trimmed);
+}
+
+pub fn push_ci_contains_any<'args, DB>(
+    builder: &mut QueryBuilder<'args, DB>,
+    where_clause: &mut WhereClause,
+    dialect: SqlDialect,
+    column_sqls: &[&str],
+    value: &str,
+) where
+    DB: Database,
+    String: 'args + Encode<'args, DB> + Type<DB>,
+{
+    let trimmed = value.trim();
+    if trimmed.is_empty() || column_sqls.is_empty() {
+        return;
+    }
+
+    where_clause.push_next(builder);
+    builder.push("(");
+    for (index, column_sql) in column_sqls.iter().enumerate() {
+        if index > 0 {
+            builder.push(" OR ");
+        }
+        push_ci_contains_predicate(builder, dialect, column_sql, trimmed);
+    }
+    builder.push(")");
+}
+
+fn push_ci_contains_predicate<'args, DB>(
+    builder: &mut QueryBuilder<'args, DB>,
+    dialect: SqlDialect,
+    column_sql: &str,
+    trimmed: &str,
+) where
+    DB: Database,
+    String: 'args + Encode<'args, DB> + Type<DB>,
+{
+    match dialect {
+        SqlDialect::Postgres => {
+            builder
+                .push(column_sql)
+                .push(" ILIKE ")
+                .push_bind(format!("%{trimmed}%"));
+        }
+        SqlDialect::Sqlite | SqlDialect::Mysql => {
+            builder
+                .push("LOWER(")
+                .push(column_sql)
+                .push(") LIKE ")
+                .push_bind(format!("%{}%", trimmed.to_ascii_lowercase()));
+        }
+    }
+}
+
+pub fn push_limit<'args, DB>(builder: &mut QueryBuilder<'args, DB>, limit: i64)
+where
+    DB: Database,
+    i64: 'args + Encode<'args, DB> + Type<DB>,
+{
+    builder.push(" LIMIT ").push_bind(limit);
+}
+
+pub fn push_limit_offset<'args, DB>(builder: &mut QueryBuilder<'args, DB>, limit: i64, offset: i64)
+where
+    DB: Database,
+    i64: 'args + Encode<'args, DB> + Type<DB>,
+{
+    push_limit(builder, limit);
+    builder.push(" OFFSET ").push_bind(offset);
+}
+
+pub fn push_order_by<DB>(
+    builder: &mut QueryBuilder<'_, DB>,
+    requested_key: Option<&str>,
+    direction: SortDirection,
+    allowed: &[OrderByColumn<'_>],
+    default_key: &str,
+) where
+    DB: Database,
+{
+    let key = requested_key.unwrap_or(default_key);
+    let column = allowed
+        .iter()
+        .find(|column| column.key == key)
+        .or_else(|| allowed.iter().find(|column| column.key == default_key))
+        .expect("default order column must be allowed");
+    builder
+        .push(" ORDER BY ")
+        .push(column.sql)
+        .push(" ")
+        .push(direction.sql());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::{Execute, MySql, Postgres, QueryBuilder, Sqlite};
+
+    #[test]
+    fn quotes_identifiers_by_dialect() {
+        assert_eq!(SqlDialect::Postgres.quote_ident("trigger"), "\"trigger\"");
+        assert_eq!(SqlDialect::Sqlite.quote_ident("trigger"), "\"trigger\"");
+        assert_eq!(SqlDialect::Mysql.quote_ident("trigger"), "`trigger`");
+        assert_eq!(
+            SqlDialect::Postgres.quote_path(&["usage", "id"]),
+            "\"usage\".\"id\""
+        );
+    }
+
+    #[test]
+    fn where_clause_pushes_where_then_and() {
+        let mut builder = QueryBuilder::<Sqlite>::new("SELECT * FROM items");
+        let mut where_clause = WhereClause::new();
+        push_eq(
+            &mut builder,
+            &mut where_clause,
+            "kind",
+            "scheduled".to_string(),
+        );
+        push_eq(
+            &mut builder,
+            &mut where_clause,
+            "status",
+            "running".to_string(),
+        );
+        let query = builder.build();
+        assert!(query.sql().contains(" WHERE kind = ? AND status = ?"));
+    }
+
+    #[test]
+    fn ci_contains_uses_ilike_for_postgres() {
+        let mut builder = QueryBuilder::<Postgres>::new("SELECT * FROM items");
+        let mut where_clause = WhereClause::new();
+        push_ci_contains(
+            &mut builder,
+            &mut where_clause,
+            SqlDialect::Postgres,
+            "task_key",
+            " Fetch ",
+        );
+        let query = builder.build();
+        assert!(query.sql().contains(" WHERE task_key ILIKE $1"));
+    }
+
+    #[test]
+    fn ci_contains_uses_lower_like_for_sqlite_and_mysql() {
+        let mut sqlite_builder = QueryBuilder::<Sqlite>::new("SELECT * FROM items");
+        let mut sqlite_where = WhereClause::new();
+        push_ci_contains(
+            &mut sqlite_builder,
+            &mut sqlite_where,
+            SqlDialect::Sqlite,
+            "task_key",
+            " Fetch ",
+        );
+        assert!(sqlite_builder
+            .build()
+            .sql()
+            .contains(" WHERE LOWER(task_key) LIKE ?"));
+
+        let mut mysql_builder = QueryBuilder::<MySql>::new("SELECT * FROM items");
+        let mut mysql_where = WhereClause::new();
+        push_ci_contains(
+            &mut mysql_builder,
+            &mut mysql_where,
+            SqlDialect::Mysql,
+            "task_key",
+            " Fetch ",
+        );
+        assert!(mysql_builder
+            .build()
+            .sql()
+            .contains(" WHERE LOWER(task_key) LIKE ?"));
+    }
+
+    #[test]
+    fn ci_contains_any_groups_or_predicates() {
+        let mut builder = QueryBuilder::<Sqlite>::new("SELECT * FROM items");
+        let mut where_clause = WhereClause::new();
+        push_ci_contains_any(
+            &mut builder,
+            &mut where_clause,
+            SqlDialect::Sqlite,
+            &["file_name", "COALESCE(display_name, '')"],
+            "Avatar",
+        );
+        let query = builder.build();
+        assert!(query.sql().contains(
+            " WHERE (LOWER(file_name) LIKE ? OR LOWER(COALESCE(display_name, '')) LIKE ?)"
+        ));
+    }
+
+    #[test]
+    fn in_limit_offset_and_order_are_rendered() {
+        let mut builder = QueryBuilder::<Sqlite>::new("SELECT * FROM items");
+        let mut where_clause = WhereClause::new();
+        push_in(
+            &mut builder,
+            &mut where_clause,
+            "id",
+            &["a".to_string(), "b".to_string()],
+        );
+        push_order_by(
+            &mut builder,
+            Some("created"),
+            SortDirection::Desc,
+            &[OrderByColumn {
+                key: "created",
+                sql: "created_at",
+            }],
+            "created",
+        );
+        push_limit_offset(&mut builder, 10, 5);
+        let query = builder.build();
+        assert!(query.sql().contains(" WHERE id IN (?, ?)"));
+        assert!(query.sql().contains(" ORDER BY created_at DESC"));
+        assert!(query.sql().contains(" LIMIT ? OFFSET ?"));
+    }
+}

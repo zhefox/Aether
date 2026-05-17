@@ -7,6 +7,7 @@ use super::{
 use crate::driver::mysql::MysqlPool;
 use crate::error::SqlResultExt;
 use crate::DataLayerError;
+use aether_data_query::{push_in, WhereClause};
 
 const QUOTA_COLUMNS: &str = r#"
 SELECT
@@ -55,14 +56,9 @@ impl ProviderQuotaReadRepository for MysqlProviderQuotaRepository {
         }
 
         let mut builder = QueryBuilder::<MySql>::new(QUOTA_COLUMNS);
-        builder.push(" WHERE id IN (");
-        {
-            let mut separated = builder.separated(", ");
-            for provider_id in provider_ids {
-                separated.push_bind(provider_id);
-            }
-        }
-        builder.push(") ORDER BY id ASC");
+        let mut where_clause = WhereClause::new();
+        push_in(&mut builder, &mut where_clause, "id", provider_ids);
+        builder.push(" ORDER BY id ASC");
         let rows = builder.build().fetch_all(&self.pool).await.map_sql_err()?;
         rows.iter().map(map_row).collect()
     }
