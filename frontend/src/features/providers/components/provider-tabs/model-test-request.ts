@@ -23,6 +23,9 @@ type ModelTestEndpointSource = {
 type ModelTestKeySource = {
   api_formats?: string[] | null
   is_active?: boolean | null
+  auth_type?: string | null
+  credential_kind?: string | null
+  oauth_managed?: boolean | null
 }
 
 export type ModelTestMappedModelOption = {
@@ -34,6 +37,20 @@ const MODEL_TEST_UNSUPPORTED_API_FORMATS = new Set([
   'openai:video',
   'gemini:video',
   'gemini:files',
+])
+
+const MODEL_TEST_OAUTH_INHERITS_PROVIDER_FORMATS = new Set([
+  'claude_code',
+  'codex',
+  'chatgpt_web',
+  'gemini_cli',
+  'vertex_ai',
+  'antigravity',
+  'kiro',
+])
+
+const MODEL_TEST_BEARER_INHERITS_PROVIDER_FORMATS = new Set([
+  'chatgpt_web',
 ])
 
 const MODEL_TEST_DIAGNOSTIC_LABELS: Record<string, string> = {
@@ -50,11 +67,14 @@ export function isModelTestableApiFormat(apiFormat: string | null | undefined): 
 export function modelTestKeySupportsEndpoint(
   key: ModelTestKeySource,
   endpoint: ModelTestEndpointSource,
+  providerType?: string | null,
 ): boolean {
   if (key.is_active === false) return false
 
   const endpointFormat = normalizeApiFormatAlias(endpoint.api_format)
   if (!isModelTestableApiFormat(endpointFormat)) return false
+
+  if (modelTestKeyInheritsProviderFormats(key, providerType)) return true
 
   const keyFormats = normalizeStringList(key.api_formats ?? undefined)
   if (keyFormats.length === 0) return true
@@ -65,10 +85,11 @@ export function modelTestKeySupportsEndpoint(
 export function isModelTestableEndpoint(
   endpoint: ModelTestEndpointSource,
   keys: ModelTestKeySource[],
+  providerType?: string | null,
 ): boolean {
   return endpoint.is_active !== false
     && isModelTestableApiFormat(endpoint.api_format)
-    && keys.some(key => modelTestKeySupportsEndpoint(key, endpoint))
+    && keys.some(key => modelTestKeySupportsEndpoint(key, endpoint, providerType))
 }
 
 export function formatModelTestDiagnostic(value: string | null | undefined): string {
@@ -94,6 +115,27 @@ function normalizeStringList(values: string[] | undefined): string[] {
   return (values ?? [])
     .map(value => value.trim())
     .filter(Boolean)
+}
+
+function modelTestKeyInheritsProviderFormats(
+  key: ModelTestKeySource,
+  providerType: string | null | undefined,
+): boolean {
+  const normalizedProviderType = providerType?.trim().toLowerCase()
+  if (!normalizedProviderType) return false
+
+  const authType = key.auth_type?.trim().toLowerCase()
+  const credentialKind = key.credential_kind?.trim().toLowerCase()
+  const oauthManaged = key.oauth_managed === true
+    || credentialKind === 'oauth_session'
+    || authType === 'oauth'
+
+  if (oauthManaged && MODEL_TEST_OAUTH_INHERITS_PROVIDER_FORMATS.has(normalizedProviderType)) {
+    return true
+  }
+
+  return authType === 'bearer'
+    && MODEL_TEST_BEARER_INHERITS_PROVIDER_FORMATS.has(normalizedProviderType)
 }
 
 function isJsonRecord(value: unknown): value is JsonRecord {
@@ -409,14 +451,16 @@ export function buildExactModelMappingTestRequest(
 }
 
 export function buildDefaultModelTestRequestBody(modelName: string, apiFormat?: string | null): string {
-  if (apiFormat?.trim().toLowerCase().endsWith(':embedding')) {
+  const normalizedApiFormat = normalizeApiFormatAlias(apiFormat ?? '')
+
+  if (normalizedApiFormat.endsWith(':embedding')) {
     return JSON.stringify({
       model: modelName,
       input: 'This is a test embedding input.',
     }, null, 2)
   }
 
-  if (apiFormat?.trim().toLowerCase().endsWith(':rerank')) {
+  if (normalizedApiFormat.endsWith(':rerank')) {
     return JSON.stringify({
       model: modelName,
       query: 'Apple',
@@ -428,6 +472,16 @@ export function buildDefaultModelTestRequestBody(modelName: string, apiFormat?: 
       ],
       return_documents: true,
       top_n: 4,
+    }, null, 2)
+  }
+
+  if (normalizedApiFormat === 'openai:image') {
+    return JSON.stringify({
+      model: modelName,
+      prompt: DEFAULT_MODEL_TEST_MESSAGE,
+      n: 1,
+      size: '1024x1024',
+      stream: true,
     }, null, 2)
   }
 

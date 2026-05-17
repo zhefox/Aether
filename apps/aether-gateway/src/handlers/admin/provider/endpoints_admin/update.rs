@@ -147,7 +147,8 @@ pub(super) async fn maybe_handle(
         .list_provider_catalog_keys_by_provider_ids(std::slice::from_ref(&provider.id))
         .await
         .unwrap_or_default();
-    let (total_keys_by_format, active_keys_by_format) = endpoint_key_counts_by_format(&keys);
+    let (total_keys_by_format, active_keys_by_format) =
+        endpoint_key_counts_by_format(&provider, std::slice::from_ref(&updated), &keys);
 
     Ok(Some(
         Json(build_admin_provider_endpoint_response(
