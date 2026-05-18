@@ -127,6 +127,7 @@ dependencies = [
  "aether-ai-formats",
  "aether-cache",
  "aether-data-contracts",
+ "aether-data-query",
  "aether-wallet",
  "async-trait",
  "chrono",
@@ -155,6 +156,13 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+]
+
+[[package]]
+name = "aether-data-query"
+version = "0.1.0"
+dependencies = [
+ "sqlx",
 ]
 
 [[package]]
