@@ -8,12 +8,12 @@ use axum::middleware::Next;
 use axum::response::Response;
 use tracing::{info, trace, warn};
 
+use crate::ai_serving::api::sanitize_request_path_and_query;
 use crate::constants::{
     CONTROL_REQUEST_ID_HEADER, CONTROL_ROUTE_CLASS_HEADER, EXECUTION_PATH_HEADER, TRACE_ID_HEADER,
 };
 use crate::headers::extract_or_generate_trace_id;
 use crate::log_ids::short_request_id;
-use aether_ai_formats::api::sanitize_request_path_and_query;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RequestLogEmitted;
