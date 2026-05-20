@@ -11,7 +11,8 @@ use serde_json::json;
 
 use crate::handlers::shared::{
     api_key_placeholder_display, deserialize_optional_json_patch,
-    generate_gateway_api_key_plaintext, masked_gateway_api_key_display, normalize_feature_settings,
+    deserialize_optional_string_list_patch, generate_gateway_api_key_plaintext,
+    masked_gateway_api_key_display, normalize_feature_settings,
     normalize_optional_api_key_concurrent_limit,
 };
 
@@ -48,7 +49,7 @@ struct UsersMeUpdateApiKeyRequest {
     concurrent_limit: Option<i32>,
     #[serde(default, deserialize_with = "deserialize_optional_json_patch")]
     feature_settings: Option<Option<serde_json::Value>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_string_list_patch")]
     allowed_ips: Option<Option<Vec<String>>>,
 }
 
@@ -1130,7 +1131,8 @@ pub(super) async fn handle_users_me_api_key_capabilities_put(
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_users_me_allowed_ips;
+    use super::{normalize_users_me_allowed_ips, UsersMeUpdateApiKeyRequest};
+    use serde_json::json;
 
     #[test]
     fn normalize_allowed_ips_trims_ip_and_cidr_values() {
@@ -1152,5 +1154,32 @@ mod tests {
             .expect_err("invalid cidr should fail");
 
         assert_eq!(err, "无效的 IP 地址或 CIDR: 10.0.0.0/99");
+    }
+
+    #[test]
+    fn update_payload_distinguishes_missing_null_and_present_allowed_ips() {
+        let missing = serde_json::from_value::<UsersMeUpdateApiKeyRequest>(json!({
+            "name": "unchanged-whitelist",
+        }))
+        .expect("missing allowed_ips should deserialize");
+        assert_eq!(missing.allowed_ips, None);
+
+        let cleared = serde_json::from_value::<UsersMeUpdateApiKeyRequest>(json!({
+            "allowed_ips": null,
+        }))
+        .expect("null allowed_ips should deserialize");
+        assert_eq!(cleared.allowed_ips, Some(None));
+
+        let updated = serde_json::from_value::<UsersMeUpdateApiKeyRequest>(json!({
+            "allowed_ips": ["203.0.113.10", "10.0.0.0/24"],
+        }))
+        .expect("present allowed_ips should deserialize");
+        assert_eq!(
+            updated.allowed_ips,
+            Some(Some(vec![
+                "203.0.113.10".to_string(),
+                "10.0.0.0/24".to_string(),
+            ])),
+        );
     }
 }

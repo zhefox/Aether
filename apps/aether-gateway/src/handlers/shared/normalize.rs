@@ -72,6 +72,15 @@ where
     <Option<Value> as serde::Deserialize>::deserialize(deserializer).map(Some)
 }
 
+pub(crate) fn deserialize_optional_string_list_patch<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<Vec<String>>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    <Option<Vec<String>> as serde::Deserialize>::deserialize(deserializer).map(Some)
+}
+
 fn normalize_chat_pii_redaction_feature_settings(
     settings: &mut Map<String, Value>,
 ) -> Result<(), String> {

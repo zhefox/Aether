@@ -1,5 +1,6 @@
 use super::ADMIN_USERS_DATA_UNAVAILABLE_DETAIL;
 use crate::handlers::admin::shared::AdminTypedObjectPatch;
+use crate::handlers::shared::deserialize_optional_string_list_patch;
 use axum::{
     body::Body,
     http,
@@ -51,7 +52,7 @@ pub(super) struct AdminUpdateUserApiKeyRequest {
     pub(super) concurrent_limit: Option<i32>,
     #[serde(default)]
     pub(super) feature_settings: Option<Option<Value>>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_optional_string_list_patch")]
     pub(super) allowed_ips: Option<Option<Vec<String>>>,
 }
 
@@ -388,7 +389,8 @@ pub(super) fn format_optional_datetime_iso8601(
 
 #[cfg(test)]
 mod tests {
-    use super::normalize_admin_user_api_formats;
+    use super::{normalize_admin_user_api_formats, AdminUpdateUserApiKeyRequest};
+    use serde_json::json;
 
     #[test]
     fn admin_user_api_formats_accept_current_canonical_signatures() {
@@ -424,5 +426,32 @@ mod tests {
                 "{unsupported} should be rejected"
             );
         }
+    }
+
+    #[test]
+    fn admin_update_api_key_distinguishes_missing_null_and_present_allowed_ips() {
+        let missing = serde_json::from_value::<AdminUpdateUserApiKeyRequest>(json!({
+            "name": "unchanged-whitelist",
+        }))
+        .expect("missing allowed_ips should deserialize");
+        assert_eq!(missing.allowed_ips, None);
+
+        let cleared = serde_json::from_value::<AdminUpdateUserApiKeyRequest>(json!({
+            "allowed_ips": null,
+        }))
+        .expect("null allowed_ips should deserialize");
+        assert_eq!(cleared.allowed_ips, Some(None));
+
+        let updated = serde_json::from_value::<AdminUpdateUserApiKeyRequest>(json!({
+            "allowed_ips": ["203.0.113.10", "10.0.0.0/24"],
+        }))
+        .expect("present allowed_ips should deserialize");
+        assert_eq!(
+            updated.allowed_ips,
+            Some(Some(vec![
+                "203.0.113.10".to_string(),
+                "10.0.0.0/24".to_string(),
+            ])),
+        );
     }
 }
