@@ -92,6 +92,19 @@
               <ExternalLink class="mr-2 h-3.5 w-3.5" />
               查看更新
             </Button>
+            <Button
+              v-if="status?.has_update"
+              size="sm"
+              class="flex-1"
+              :disabled="updating"
+              @click="handleApplyUpdate"
+            >
+              <RefreshCw
+                class="mr-2 h-3.5 w-3.5"
+                :class="updating ? 'animate-spin' : ''"
+              />
+              {{ actionButtonLabel }}
+            </Button>
           </div>
         </div>
       </div>
@@ -110,16 +123,21 @@ import { ExternalLink, Info, RefreshCw } from 'lucide-vue-next'
 const props = defineProps<{
   status: CheckUpdateResponse | null
   loading?: boolean
+  updating?: boolean
+  updatePhase?: 'download' | 'restart'
 }>()
 
 const emit = defineEmits<{
   refresh: []
   openRelease: []
+  applyUpdate: []
 }>()
 
 const isOpen = ref(false)
 
 const loading = computed(() => props.loading ?? false)
+const updating = computed(() => props.updating ?? false)
+const updatePhase = computed(() => props.updatePhase ?? 'download')
 const buttonClass = computed(() => {
   const classes = []
 
@@ -160,6 +178,12 @@ const buttonTitle = computed(() => {
   if (!props.status) return '版本信息'
   return `版本信息：${statusLabel.value}`
 })
+const actionButtonLabel = computed(() => {
+  if (updating.value) {
+    return updatePhase.value === 'restart' ? '重启中...' : '下载中...'
+  }
+  return updatePhase.value === 'restart' ? '立即重启' : '立即更新'
+})
 
 function handleRefresh() {
   emit('refresh')
@@ -168,5 +192,9 @@ function handleRefresh() {
 function handleOpenRelease() {
   isOpen.value = false
   emit('openRelease')
+}
+
+function handleApplyUpdate() {
+  emit('applyUpdate')
 }
 </script>

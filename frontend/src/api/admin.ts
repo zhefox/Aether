@@ -373,6 +373,22 @@ export interface CheckUpdateResponse {
   error: string | null
 }
 
+export interface SystemUpdateCapabilityResponse {
+  enabled: boolean
+  command_env: string
+  workdir_env: string
+  command?: string | null
+  workdir?: string | null
+  detail?: string | null
+  message: string
+}
+
+export interface ApplySystemUpdateResponse {
+  message: string
+  started: boolean
+  need_restart: boolean
+}
+
 // LDAP 配置响应
 export interface LdapConfigResponse {
   server_url: string | null
@@ -977,6 +993,30 @@ export const adminApi = {
   async checkUpdate(): Promise<CheckUpdateResponse> {
     const response = await apiClient.get<CheckUpdateResponse>(
       '/api/admin/system/check-update'
+    )
+    return response.data
+  },
+
+  // 获取一键更新能力
+  async getSystemUpdateCapability(): Promise<SystemUpdateCapabilityResponse> {
+    const response = await apiClient.get<SystemUpdateCapabilityResponse>(
+      '/api/admin/system/update-capability'
+    )
+    return response.data
+  },
+
+  // 准备系统一键更新（拉取最新镜像）
+  async prepareSystemUpdate(): Promise<ApplySystemUpdateResponse> {
+    const response = await apiClient.post<ApplySystemUpdateResponse>(
+      '/api/admin/system/prepare-update'
+    )
+    return response.data
+  },
+
+  // 触发系统一键重启（重建 app 容器）
+  async applySystemUpdate(): Promise<ApplySystemUpdateResponse> {
+    const response = await apiClient.post<ApplySystemUpdateResponse>(
+      '/api/admin/system/apply-update'
     )
     return response.data
   },

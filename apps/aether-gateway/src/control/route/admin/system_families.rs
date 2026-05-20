@@ -23,6 +23,33 @@ pub(super) fn classify_admin_system_family_route(
             "admin:system",
             false,
         ))
+    } else if method == http::Method::GET
+        && normalized_path == "/api/admin/system/update-capability"
+    {
+        Some(classified(
+            "admin_proxy",
+            "system_manage",
+            "update_capability",
+            "admin:system",
+            false,
+        ))
+    } else if method == http::Method::POST && normalized_path == "/api/admin/system/prepare-update"
+    {
+        Some(classified(
+            "admin_proxy",
+            "system_manage",
+            "prepare_update",
+            "admin:system",
+            false,
+        ))
+    } else if method == http::Method::POST && normalized_path == "/api/admin/system/apply-update" {
+        Some(classified(
+            "admin_proxy",
+            "system_manage",
+            "apply_update",
+            "admin:system",
+            false,
+        ))
     } else if method == http::Method::GET && normalized_path == "/api/admin/system/aws-regions" {
         Some(classified(
             "admin_proxy",

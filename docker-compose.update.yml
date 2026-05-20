@@ -1,0 +1,14 @@
+# Optional one-click update wiring for Docker Compose deployments.
+#
+# This file is installed by install.sh and included by update.sh when present.
+# It gives the app container access to the deployment directory and Docker
+# socket so the admin "立即更新" button can execute update.sh.
+
+services:
+  app:
+    environment:
+      AETHER_SYSTEM_UPDATE_COMMAND: ${AETHER_SYSTEM_UPDATE_COMMAND:-/opt/aether/compose/update.sh}
+      AETHER_SYSTEM_UPDATE_WORKDIR: ${AETHER_SYSTEM_UPDATE_WORKDIR:-/opt/aether/compose}
+    volumes:
+      - ${AETHER_SYSTEM_UPDATE_WORKDIR:-/opt/aether/compose}:${AETHER_SYSTEM_UPDATE_WORKDIR:-/opt/aether/compose}
+      - /var/run/docker.sock:/var/run/docker.sock

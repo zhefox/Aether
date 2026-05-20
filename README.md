@@ -55,10 +55,39 @@ docker compose pull && docker compose up -d
 docker compose -f docker-compose.single-node.yml pull && docker compose -f docker-compose.single-node.yml up -d
 ```
 
+### 一键更新
+
+Docker Compose 部署后，可在部署目录直接执行：
+
+```bash
+./update.sh
+```
+
+`update.sh` 会拉取最新 `app` 镜像并重建 `app` 容器，数据卷、Postgres、Redis 不会被删除。Single Node 部署也可显式指定：
+
+```bash
+./update.sh --mode single-node
+```
+
+管理后台右上角“版本信息”会在检测到新版本时显示“立即更新”。通过 `install.sh` 初始化的 Docker Compose 部署会自动安装 `docker-compose.update.yml`，把部署目录和 Docker socket 挂给 `app` 容器，并默认写入：
+
+```bash
+AETHER_SYSTEM_UPDATE_COMMAND=/opt/aether/compose/update.sh
+AETHER_SYSTEM_UPDATE_WORKDIR=/opt/aether/compose
+```
+
+如果你是手动部署或用了自定义路径，可以把这两个变量改成你自己的 `update.sh` 所在位置，并确保运行时容器能访问该路径和 `/var/run/docker.sock`。启用后点击“立即更新”会先拉取最新 `app` 镜像，下载完成后按钮会切换为“立即重启”；点击“立即重启”会重建 `app` 容器并应用新版本。这不是运行时热补丁，更新过程中服务会短暂重启。
+
+如果是本地源码构建镜像的部署，继续使用：
+
+```bash
+./deploy.sh
+```
+
 ### 一键安装（默认 Single Node：Linux systemd / macOS launchd + SQLite）
 
 ```bash
-cd Aether && cd Aether
+cd Aether
 curl -fsSL https://raw.githubusercontent.com/fawney19/Aether/main/install.sh | sudo bash
 ```
 

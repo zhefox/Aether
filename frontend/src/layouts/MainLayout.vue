@@ -118,8 +118,11 @@
                 v-if="isAdmin"
                 :status="versionStatus"
                 :loading="loadingVersionStatus"
+                :updating="applyingSystemUpdate"
+                :update-phase="systemUpdatePhase"
                 @refresh="handleVersionRefresh"
                 @open-release="openVersionReleasePage"
+                @apply-update="handleApplySystemUpdate"
               />
               <button
                 class="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted/50 transition"
@@ -301,8 +304,11 @@
             v-if="isAdmin"
             :status="versionStatus"
             :loading="loadingVersionStatus"
+            :updating="applyingSystemUpdate"
+            :update-phase="systemUpdatePhase"
             @refresh="handleVersionRefresh"
             @open-release="openVersionReleasePage"
+            @apply-update="handleApplySystemUpdate"
           />
           <!-- Theme Toggle -->
           <button
@@ -385,6 +391,9 @@
       :release-url="updateInfo.release_url"
       :release-notes="updateInfo.release_notes"
       :published-at="updateInfo.published_at"
+      :updating="applyingSystemUpdate"
+      :update-phase="systemUpdatePhase"
+      @apply-update="handleApplySystemUpdate"
     />
   </AppShell>
 </template>
@@ -397,9 +406,11 @@ import { useAuthStore } from '@/stores/auth'
 import { useModuleStore } from '@/stores/modules'
 import { useDarkMode } from '@/composables/useDarkMode'
 import { useSiteInfo } from '@/composables/useSiteInfo'
+import { useToast } from '@/composables/useToast'
 import { isDemoMode } from '@/config/demo'
 import { adminApi, type CheckUpdateResponse } from '@/api/admin'
 import { announcementApi, type Announcement } from '@/api/announcements'
+import { parseApiError } from '@/utils/errorParser'
 import Button from '@/components/ui/button.vue'
 import { Dialog } from '@/components/ui'
 import AppShell from '@/components/layout/AppShell.vue'
@@ -449,12 +460,15 @@ import { BUILTIN_TOOL_BREADCRUMBS } from '@/config/builtin-tools'
 import { prefetchAdminNavigationTarget } from '@/utils/adminNavigationPrefetch'
 import { sanitizeMarkdown } from '@/utils/sanitize'
 
+type SystemUpdatePhase = 'download' | 'restart'
+
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
 const moduleStore = useModuleStore()
 const { themeMode, toggleDarkMode } = useDarkMode()
 const { siteName, siteSubtitle } = useSiteInfo()
+const { success, error: showError } = useToast()
 const isDemo = computed(() => isDemoMode())
 const isAdmin = computed(() => authStore.user?.role === 'admin')
 
@@ -475,7 +489,51 @@ const showUpdateDialog = ref(false)
 const updateInfo = ref<CheckUpdateResponse | null>(null)
 const versionStatus = ref<CheckUpdateResponse | null>(null)
 const loadingVersionStatus = ref(false)
+const applyingSystemUpdate = ref(false)
+const systemUpdatePhase = ref<SystemUpdatePhase>(readStoredSystemUpdatePhase())
+const preparedUpdateVersion = ref<string | null>(
+  readSessionStorageItem('aether_prepared_update_version')
+)
 let versionStatusLoadPromise: Promise<CheckUpdateResponse | null> | null = null
+
+watch(systemUpdatePhase, (val) => {
+  setSessionStorageItem('aether_update_phase', val)
+})
+watch(preparedUpdateVersion, (val) => {
+  if (val) {
+    setSessionStorageItem('aether_prepared_update_version', val)
+  } else {
+    removeSessionStorageItem('aether_prepared_update_version')
+  }
+})
+
+function readStoredSystemUpdatePhase(): SystemUpdatePhase {
+  return readSessionStorageItem('aether_update_phase') === 'restart' ? 'restart' : 'download'
+}
+
+function readSessionStorageItem(key: string): string | null {
+  try {
+    return sessionStorage.getItem(key)
+  } catch {
+    return null
+  }
+}
+
+function setSessionStorageItem(key: string, value: string) {
+  try {
+    sessionStorage.setItem(key, value)
+  } catch {
+    // Ignore storage failures; update state still lives in memory for this page.
+  }
+}
+
+function removeSessionStorageItem(key: string) {
+  try {
+    sessionStorage.removeItem(key)
+  } catch {
+    // Ignore storage failures; update state still lives in memory for this page.
+  }
+}
 
 // 路由变化时自动关闭移动端菜单
 watch(() => route.path, () => {
@@ -508,6 +566,7 @@ async function loadVersionStatus() {
   versionStatusLoadPromise = (async () => {
     try {
       versionStatus.value = await adminApi.checkUpdate()
+      syncSystemUpdatePhase(versionStatus.value)
       return versionStatus.value
     } catch (error) {
       versionStatus.value = buildUpdateErrorStatus(versionStatus.value, error)
@@ -521,6 +580,22 @@ async function loadVersionStatus() {
   return versionStatusLoadPromise
 }
 
+function syncSystemUpdatePhase(status: CheckUpdateResponse | null) {
+  if (!status?.has_update) {
+    systemUpdatePhase.value = 'download'
+    preparedUpdateVersion.value = null
+    return
+  }
+
+  if (
+    systemUpdatePhase.value === 'restart' &&
+    (!preparedUpdateVersion.value || preparedUpdateVersion.value !== status.latest_version)
+  ) {
+    systemUpdatePhase.value = 'download'
+    preparedUpdateVersion.value = null
+  }
+}
+
 function handleVersionRefresh() {
   void loadVersionStatus()
 }
@@ -528,6 +603,38 @@ function handleVersionRefresh() {
 function openVersionReleasePage() {
   if (versionStatus.value?.release_url) {
     window.open(versionStatus.value.release_url, '_blank', 'noopener,noreferrer')
+  }
+}
+
+async function handleApplySystemUpdate() {
+  if (applyingSystemUpdate.value) return
+  applyingSystemUpdate.value = true
+  try {
+    const capability = await adminApi.getSystemUpdateCapability()
+    if (!capability.enabled) {
+      showError(
+        capability.detail || `一键更新未启用，请先在部署环境配置 ${capability.command_env}`,
+        '无法启动更新'
+      )
+      return
+    }
+
+    if (systemUpdatePhase.value === 'download') {
+      const result = await adminApi.prepareSystemUpdate()
+      preparedUpdateVersion.value = updateInfo.value?.latest_version || versionStatus.value?.latest_version || null
+      systemUpdatePhase.value = 'restart'
+      success(result.message || '更新包已下载完成，请点击“立即重启”完成安装')
+      return
+    }
+
+    const result = await adminApi.applySystemUpdate()
+    success(result.message || '一键重启已启动')
+    showUpdateDialog.value = false
+  } catch (err) {
+    const fallback = systemUpdatePhase.value === 'download' ? '下载更新失败' : '启动重启失败'
+    showError(parseApiError(err, fallback))
+  } finally {
+    applyingSystemUpdate.value = false
   }
 }
 
@@ -547,6 +654,8 @@ function showDebugUpdateDialog() {
     published_at: new Date().toISOString(),
     error: null,
   }
+  systemUpdatePhase.value = 'download'
+  preparedUpdateVersion.value = null
   showUpdateDialog.value = true
 }
 
@@ -568,6 +677,8 @@ function showDebugVersionStatus(hasUpdate = true) {
     published_at: hasUpdate ? new Date().toISOString() : null,
     error: null,
   }
+  systemUpdatePhase.value = 'download'
+  preparedUpdateVersion.value = null
 }
 
 // 检查更新

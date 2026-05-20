@@ -235,6 +235,43 @@ fn classifies_admin_system_check_update_as_admin_proxy_route() {
 }
 
 #[test]
+fn classifies_admin_system_update_routes_as_admin_proxy_routes() {
+    let headers = headers(&[]);
+    let cases = [
+        (
+            http::Method::GET,
+            "/api/admin/system/update-capability",
+            "update_capability",
+        ),
+        (
+            http::Method::POST,
+            "/api/admin/system/prepare-update",
+            "prepare_update",
+        ),
+        (
+            http::Method::POST,
+            "/api/admin/system/apply-update",
+            "apply_update",
+        ),
+    ];
+
+    for (method, path, expected_kind) in cases {
+        let uri: Uri = path.parse().expect("uri should parse");
+        let decision =
+            classify_control_route(&method, &uri, &headers).expect("route should classify");
+
+        assert_eq!(decision.route_class.as_deref(), Some("admin_proxy"));
+        assert_eq!(decision.route_family.as_deref(), Some("system_manage"));
+        assert_eq!(decision.route_kind.as_deref(), Some(expected_kind));
+        assert_eq!(
+            decision.auth_endpoint_signature.as_deref(),
+            Some("admin:system")
+        );
+        assert!(!decision.is_execution_runtime_candidate());
+    }
+}
+
+#[test]
 fn classifies_admin_system_aws_regions_as_admin_proxy_route() {
     let headers = headers(&[]);
     let uri: Uri = "/api/admin/system/aws-regions"

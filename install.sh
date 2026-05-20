@@ -940,8 +940,9 @@ Install complete.
 
 Docker Compose service:
   cd ${COMPOSE_DIR}
-  ${compose_cmd} ps
-  ${compose_cmd} logs -f app
+  ./update.sh
+  ${compose_cmd} -f docker-compose.yml -f docker-compose.update.yml ps
+  ${compose_cmd} -f docker-compose.yml -f docker-compose.update.yml logs -f app
 
 Health checks:
   curl -fsS http://127.0.0.1:${gateway_port}/_gateway/health
@@ -961,9 +962,13 @@ compose_manual_start_steps() {
 
 Next steps:
   cd ${COMPOSE_DIR}
-  ${compose_cmd} pull
-  ${compose_cmd} up -d
-  ${compose_cmd} logs -f app
+  ${compose_cmd} -f docker-compose.yml -f docker-compose.update.yml pull
+  ${compose_cmd} -f docker-compose.yml -f docker-compose.update.yml up -d
+  ${compose_cmd} -f docker-compose.yml -f docker-compose.update.yml logs -f app
+
+Later updates:
+  cd ${COMPOSE_DIR}
+  ./update.sh
 
 Generate a fresh key set any time:
   cd ${COMPOSE_DIR}
@@ -977,13 +982,13 @@ start_compose_deployment() {
 
     info "pulling Docker Compose images"
     if [[ "${compose_cmd}" == "docker compose" ]]; then
-        docker compose pull
+        docker compose --project-directory "${COMPOSE_DIR}" -f "${COMPOSE_DIR}/docker-compose.yml" -f "${COMPOSE_DIR}/docker-compose.update.yml" pull
         info "starting Docker Compose services"
-        docker compose up -d
+        docker compose --project-directory "${COMPOSE_DIR}" -f "${COMPOSE_DIR}/docker-compose.yml" -f "${COMPOSE_DIR}/docker-compose.update.yml" up -d
     else
-        docker-compose pull
+        docker-compose --project-directory "${COMPOSE_DIR}" -f "${COMPOSE_DIR}/docker-compose.yml" -f "${COMPOSE_DIR}/docker-compose.update.yml" pull
         info "starting Docker Compose services"
-        docker-compose up -d
+        docker-compose --project-directory "${COMPOSE_DIR}" -f "${COMPOSE_DIR}/docker-compose.yml" -f "${COMPOSE_DIR}/docker-compose.update.yml" up -d
     fi
 }
 
@@ -1780,6 +1785,8 @@ generate_compose_env() {
     replace_or_append_env "${output}" "AETHER_LOG_FORMAT" "pretty"
     replace_or_append_env "${output}" "AETHER_LOG_DIR" "/app/logs"
     replace_or_append_env "${output}" "AETHER_GATEWAY_AUTO_PREPARE_DATABASE" "true"
+    replace_or_append_env "${output}" "AETHER_SYSTEM_UPDATE_COMMAND" "${COMPOSE_DIR}/update.sh"
+    replace_or_append_env "${output}" "AETHER_SYSTEM_UPDATE_WORKDIR" "${COMPOSE_DIR}"
 }
 
 generate_compose_single_node_env() {
@@ -1805,6 +1812,8 @@ APP_PORT=${APP_PORT:-8084}
 AETHER_GATEWAY_STATIC_DIR=/srv/frontend
 AETHER_GATEWAY_VIDEO_TASK_TRUTH_SOURCE_MODE=rust-authoritative
 AETHER_GATEWAY_AUTO_PREPARE_DATABASE=true
+AETHER_SYSTEM_UPDATE_COMMAND=${COMPOSE_DIR}/update.sh
+AETHER_SYSTEM_UPDATE_WORKDIR=${COMPOSE_DIR}
 AETHER_RUNTIME_BACKEND=memory
 API_KEY_PREFIX=sk
 
@@ -2185,7 +2194,9 @@ install_compose_mode() {
     ensure_directory "${COMPOSE_DIR}/logs"
 
     install_project_file "docker-compose.yml" "${COMPOSE_DIR}/docker-compose.yml" "0644"
+    install_project_file "docker-compose.update.yml" "${COMPOSE_DIR}/docker-compose.update.yml" "0644"
     install_project_file ".env.example" "${COMPOSE_DIR}/.env.example" "0644"
+    install_project_file "update.sh" "${COMPOSE_DIR}/update.sh" "0755"
     install_generate_keys_script "${COMPOSE_DIR}/generate_keys.sh"
 
     if [[ -f "${COMPOSE_DIR}/.env" ]]; then
@@ -2200,8 +2211,10 @@ install_compose_mode() {
 
 Docker Compose files are ready:
   ${COMPOSE_DIR}/docker-compose.yml
+  ${COMPOSE_DIR}/docker-compose.update.yml
   ${COMPOSE_DIR}/.env
   ${COMPOSE_DIR}/.env.example
+  ${COMPOSE_DIR}/update.sh
   ${COMPOSE_DIR}/generate_keys.sh
   ${COMPOSE_DIR}/logs
 EOF
@@ -2224,7 +2237,9 @@ install_compose_single_node_mode() {
     ensure_directory "${COMPOSE_DIR}/data"
 
     install_project_file "docker-compose.single-node.yml" "${COMPOSE_DIR}/docker-compose.yml" "0644"
+    install_project_file "docker-compose.update.yml" "${COMPOSE_DIR}/docker-compose.update.yml" "0644"
     install_project_file ".env.example" "${COMPOSE_DIR}/.env.example" "0644"
+    install_project_file "update.sh" "${COMPOSE_DIR}/update.sh" "0755"
     install_generate_keys_script "${COMPOSE_DIR}/generate_keys.sh"
 
     if [[ -f "${COMPOSE_DIR}/.env" ]]; then
@@ -2239,8 +2254,10 @@ install_compose_single_node_mode() {
 
 Docker Compose single-node files are ready:
   ${COMPOSE_DIR}/docker-compose.yml
+  ${COMPOSE_DIR}/docker-compose.update.yml
   ${COMPOSE_DIR}/.env
   ${COMPOSE_DIR}/.env.example
+  ${COMPOSE_DIR}/update.sh
   ${COMPOSE_DIR}/generate_keys.sh
   ${COMPOSE_DIR}/data
   ${COMPOSE_DIR}/logs

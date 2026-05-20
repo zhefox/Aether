@@ -36,6 +36,70 @@ use crate::constants::{
 };
 use crate::data::GatewayDataState;
 
+struct TestEnvVarGuard {
+    key: &'static str,
+    previous: Option<String>,
+}
+
+struct TestUpdateCommand {
+    path: std::path::PathBuf,
+    log_path: std::path::PathBuf,
+}
+
+impl Drop for TestUpdateCommand {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+        let _ = std::fs::remove_file(&self.log_path);
+    }
+}
+
+impl Drop for TestEnvVarGuard {
+    fn drop(&mut self) {
+        if let Some(previous) = self.previous.as_deref() {
+            std::env::set_var(self.key, previous);
+        } else {
+            std::env::remove_var(self.key);
+        }
+    }
+}
+
+fn set_test_env_var(key: &'static str, value: &str) -> TestEnvVarGuard {
+    let previous = std::env::var(key).ok();
+    std::env::set_var(key, value);
+    TestEnvVarGuard { key, previous }
+}
+
+fn create_test_update_command() -> TestUpdateCommand {
+    let suffix = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time should be valid")
+        .as_nanos();
+    let temp_dir = std::env::temp_dir();
+    let extension = if cfg!(windows) { "cmd" } else { "sh" };
+    let path = temp_dir.join(format!("aether-update-test-{suffix}.{extension}"));
+    let log_path = temp_dir.join(format!("aether-update-test-{suffix}.log"));
+    let log_path_text = log_path.to_string_lossy();
+    let content = if cfg!(windows) {
+        format!("@echo off\r\necho %*>>\"{log_path_text}\"\r\nexit /b 0\r\n")
+    } else {
+        let escaped_log_path = log_path_text.replace('"', "\\\"");
+        format!("#!/usr/bin/env sh\nprintf '%s\\n' \"$*\" >> \"{escaped_log_path}\"\n")
+    };
+    std::fs::write(&path, content).expect("test update command should be written");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = std::fs::metadata(&path)
+            .expect("test update command metadata should be readable")
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&path, permissions)
+            .expect("test update command should be executable");
+    }
+
+    TestUpdateCommand { path, log_path }
+}
+
 #[tokio::test]
 async fn gateway_handles_admin_system_version_locally_with_trusted_admin_principal() {
     let upstream_hits = Arc::new(Mutex::new(0usize));
@@ -156,6 +220,166 @@ async fn gateway_handles_admin_system_check_update_locally_with_bearer_admin_ses
 
     gateway_handle.abort();
     upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_handles_admin_system_update_capability_locally() {
+    let upstream_hits = Arc::new(Mutex::new(0usize));
+    let upstream_hits_clone = Arc::clone(&upstream_hits);
+    let upstream = Router::new().route(
+        "/api/admin/system/update-capability",
+        any(move |_request: Request| {
+            let upstream_hits_inner = Arc::clone(&upstream_hits_clone);
+            async move {
+                *upstream_hits_inner.lock().expect("mutex should lock") += 1;
+                (StatusCode::OK, Body::from("unexpected upstream hit"))
+            }
+        }),
+    );
+
+    let (upstream_url, upstream_handle) = start_server(upstream).await;
+    let gateway = build_router_with_state(AppState::new().expect("gateway should build"));
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = reqwest::Client::new()
+        .get(format!("{gateway_url}/api/admin/system/update-capability"))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(payload["command_env"], "AETHER_SYSTEM_UPDATE_COMMAND");
+    assert!(payload["enabled"].is_boolean());
+    assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_prepares_admin_system_update_locally() {
+    let command = create_test_update_command();
+    let _command_guard = set_test_env_var(
+        "AETHER_SYSTEM_UPDATE_COMMAND",
+        command
+            .path
+            .to_str()
+            .expect("test command path should be utf-8"),
+    );
+    let _workdir_guard = set_test_env_var("AETHER_SYSTEM_UPDATE_WORKDIR", ".");
+    let upstream_hits = Arc::new(Mutex::new(0usize));
+    let upstream_hits_clone = Arc::clone(&upstream_hits);
+    let upstream = Router::new().route(
+        "/api/admin/system/prepare-update",
+        any(move |_request: Request| {
+            let upstream_hits_inner = Arc::clone(&upstream_hits_clone);
+            async move {
+                *upstream_hits_inner.lock().expect("mutex should lock") += 1;
+                (StatusCode::OK, Body::from("unexpected upstream hit"))
+            }
+        }),
+    );
+
+    let (upstream_url, upstream_handle) = start_server(upstream).await;
+    let gateway = build_router_with_state(AppState::new().expect("gateway should build"));
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/api/admin/system/prepare-update"))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert_eq!(payload["need_restart"], json!(true));
+    assert!(payload["message"]
+        .as_str()
+        .is_some_and(|value| value.contains("立即重启")));
+    let command_log = std::fs::read_to_string(&command.log_path).expect("test command should run");
+    assert!(command_log.contains("--prepare"));
+    assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_rejects_admin_system_apply_update_without_config_locally() {
+    let upstream_hits = Arc::new(Mutex::new(0usize));
+    let upstream_hits_clone = Arc::clone(&upstream_hits);
+    let upstream = Router::new().route(
+        "/api/admin/system/apply-update",
+        any(move |_request: Request| {
+            let upstream_hits_inner = Arc::clone(&upstream_hits_clone);
+            async move {
+                *upstream_hits_inner.lock().expect("mutex should lock") += 1;
+                (StatusCode::OK, Body::from("unexpected upstream hit"))
+            }
+        }),
+    );
+
+    let (upstream_url, upstream_handle) = start_server(upstream).await;
+    let gateway = build_router_with_state(AppState::new().expect("gateway should build"));
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/api/admin/system/apply-update"))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(response.status(), StatusCode::PRECONDITION_REQUIRED);
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert!(payload["detail"]
+        .as_str()
+        .is_some_and(|value| value.contains("AETHER_SYSTEM_UPDATE_COMMAND")));
+    assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
+
+    gateway_handle.abort();
+    upstream_handle.abort();
+}
+
+#[tokio::test]
+async fn gateway_rejects_admin_system_apply_update_when_command_path_is_inaccessible() {
+    let _command_guard = set_test_env_var(
+        "AETHER_SYSTEM_UPDATE_COMMAND",
+        "/definitely/missing/aether-update.sh",
+    );
+    let _workdir_guard = set_test_env_var("AETHER_SYSTEM_UPDATE_WORKDIR", ".");
+    let gateway = build_router_with_state(AppState::new().expect("gateway should build"));
+    let (gateway_url, gateway_handle) = start_server(gateway).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/api/admin/system/apply-update"))
+        .header(crate::constants::GATEWAY_HEADER, "rust-phase3b")
+        .header(TRUSTED_ADMIN_USER_ID_HEADER, "admin-user-123")
+        .header(TRUSTED_ADMIN_USER_ROLE_HEADER, "admin")
+        .header(TRUSTED_ADMIN_SESSION_ID_HEADER, "session-123")
+        .send()
+        .await
+        .expect("request should succeed");
+
+    assert_eq!(response.status(), StatusCode::PRECONDITION_REQUIRED);
+    let payload: serde_json::Value = response.json().await.expect("json body should parse");
+    assert!(payload["detail"]
+        .as_str()
+        .is_some_and(|value| value.contains("路径不可访问")));
+
+    gateway_handle.abort();
 }
 
 #[tokio::test]

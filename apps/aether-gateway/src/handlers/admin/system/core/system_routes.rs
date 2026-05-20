@@ -17,6 +17,10 @@ use crate::handlers::admin::system::shared::settings::{
     build_admin_system_stats_payload, current_aether_version, fetch_latest_admin_system_release,
 };
 use crate::handlers::admin::system::shared::smtp::build_admin_smtp_test_payload;
+use crate::handlers::admin::system::shared::update::{
+    build_admin_system_update_capability_payload, prepare_admin_system_update_task,
+    start_admin_system_update_task,
+};
 use crate::maintenance::{ManualUsageCleanupMode, ManualUsageCleanupOptions};
 use crate::GatewayError;
 use aether_data_contracts::repository::usage::UsageCleanupTargets;
@@ -65,6 +69,47 @@ pub(super) async fn maybe_build_local_admin_core_system_response(
             ))
             .into_response(),
         ));
+    }
+
+    if decision.route_kind.as_deref() == Some("update_capability")
+        && request_method == http::Method::GET
+        && request_path == "/api/admin/system/update-capability"
+    {
+        return Ok(Some(
+            Json(build_admin_system_update_capability_payload()).into_response(),
+        ));
+    }
+
+    if decision.route_kind.as_deref() == Some("prepare_update")
+        && request_method == http::Method::POST
+        && request_path == "/api/admin/system/prepare-update"
+    {
+        return Ok(Some(match prepare_admin_system_update_task().await? {
+            Ok(payload) => attach_admin_audit_response(
+                Json(payload).into_response(),
+                "admin_system_update_prepared",
+                "prepare_system_update",
+                "system_update",
+                "global",
+            ),
+            Err((status, payload)) => (status, Json(payload)).into_response(),
+        }));
+    }
+
+    if decision.route_kind.as_deref() == Some("apply_update")
+        && request_method == http::Method::POST
+        && request_path == "/api/admin/system/apply-update"
+    {
+        return Ok(Some(match start_admin_system_update_task().await? {
+            Ok(payload) => attach_admin_audit_response(
+                Json(payload).into_response(),
+                "admin_system_update_started",
+                "apply_system_update",
+                "system_update",
+                "global",
+            ),
+            Err((status, payload)) => (status, Json(payload)).into_response(),
+        }));
     }
 
     if decision.route_kind.as_deref() == Some("aws_regions")

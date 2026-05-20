@@ -55,6 +55,13 @@
       >
         新版本已发布，建议更新以获得最新功能和安全修复
       </p>
+
+      <p
+        v-if="updatePhase === 'restart'"
+        class="mt-1 text-xs text-primary"
+      >
+        更新包已下载，点击“立即重启”完成安装
+      </p>
     </div>
 
     <template #footer>
@@ -62,15 +69,25 @@
         <Button
           variant="outline"
           class="flex-1"
+          :disabled="updating"
           @click="handleLater"
         >
           稍后提醒
         </Button>
         <Button
+          variant="outline"
           class="flex-1"
+          :disabled="updating"
           @click="handleViewRelease"
         >
           查看更新
+        </Button>
+        <Button
+          class="flex-1"
+          :disabled="updating"
+          @click="handleApplyUpdate"
+        >
+          {{ actionButtonLabel }}
         </Button>
       </div>
     </template>
@@ -93,13 +110,24 @@ const props = defineProps<{
   releaseUrl: string | null
   releaseNotes: string | null
   publishedAt: string | null
+  updatePhase?: 'download' | 'restart'
+  updating?: boolean
 }>()
 
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
+  applyUpdate: []
 }>()
 
 const isOpen = ref(props.modelValue)
+const updating = computed(() => props.updating ?? false)
+const updatePhase = computed(() => props.updatePhase ?? 'download')
+const actionButtonLabel = computed(() => {
+  if (updating.value) {
+    return updatePhase.value === 'restart' ? '重启中...' : '下载中...'
+  }
+  return updatePhase.value === 'restart' ? '立即重启' : '立即更新'
+})
 
 watch(() => props.modelValue, (val) => {
   isOpen.value = val
@@ -156,5 +184,9 @@ function handleViewRelease() {
     window.open(props.releaseUrl, '_blank')
   }
   isOpen.value = false
+}
+
+function handleApplyUpdate() {
+  emit('applyUpdate')
 }
 </script>

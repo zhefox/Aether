@@ -22,6 +22,11 @@ use std::time::Duration;
 const AETHER_RELEASES_API_URL: &str =
     "https://api.github.com/repos/fawney19/Aether/releases?per_page=20";
 
+/// Minimum interval between actual GitHub API requests.  Within this window
+/// the cached result is reused.
+#[cfg(not(test))]
+const RELEASE_CACHE_TTL: Duration = Duration::from_secs(300);
+
 pub(crate) fn current_aether_version() -> String {
     option_env!("AETHER_BUILD_VERSION")
         .filter(|version| !version.is_empty())
@@ -47,10 +52,40 @@ pub(crate) fn build_admin_system_check_update_payload_from_release(
 #[cfg(not(test))]
 pub(crate) async fn fetch_latest_admin_system_release(
 ) -> (Option<AdminSystemUpdateRelease>, Option<String>) {
-    match fetch_latest_admin_system_release_inner().await {
+    use std::sync::Mutex;
+    use std::time::Instant;
+
+    struct CachedRelease {
+        result: (Option<AdminSystemUpdateRelease>, Option<String>),
+        fetched_at: Instant,
+    }
+
+    static CACHE: std::sync::OnceLock<Mutex<Option<CachedRelease>>> = std::sync::OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(None));
+
+    {
+        if let Ok(guard) = cache.lock() {
+            if let Some(cached) = guard.as_ref() {
+                if cached.fetched_at.elapsed() < RELEASE_CACHE_TTL {
+                    return cached.result.clone();
+                }
+            }
+        }
+    }
+
+    let result = match fetch_latest_admin_system_release_inner().await {
         Ok(release) => (release, None),
         Err(err) => (None, Some(err)),
+    };
+
+    if let Ok(mut guard) = cache.lock() {
+        *guard = Some(CachedRelease {
+            result: result.clone(),
+            fetched_at: Instant::now(),
+        });
     }
+
+    result
 }
 
 #[cfg(test)]
@@ -80,7 +115,7 @@ async fn fetch_latest_admin_system_release_inner(
 
     Ok(releases
         .into_iter()
-        .find(|release| !release.draft && release.tag_name.starts_with('v'))
+        .find(|release| !release.draft && !release.prerelease && release.tag_name.starts_with('v'))
         .map(|release| AdminSystemUpdateRelease {
             version: release.tag_name,
             release_url: Some(release.html_url),
@@ -100,6 +135,8 @@ struct GitHubRelease {
     published_at: Option<String>,
     #[serde(default)]
     draft: bool,
+    #[serde(default)]
+    prerelease: bool,
 }
 
 pub(crate) async fn build_admin_system_stats_payload(
