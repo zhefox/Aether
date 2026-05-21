@@ -628,10 +628,6 @@ fn build_terminal_usage_event_from_seed_impl(
         apply_completed_image_usage_estimate(&mut data);
     }
 
-    if matches!(event_type, UsageEventType::Cancelled) {
-        apply_cancelled_usage_estimate(&mut data);
-    }
-
     let data = if trusted_request_metadata {
         sanitize_usage_event_capture_fields_trusted(data)
     } else {
@@ -2321,48 +2317,6 @@ fn extract_token_counts_from_value(value: &Value) -> Option<(u64, u64, u64)> {
     }
 }
 
-fn apply_cancelled_usage_estimate(data: &mut UsageEventData) {
-    let provider_usage_available = data
-        .response_body
-        .as_ref()
-        .and_then(extract_token_counts_from_value)
-        .is_some();
-    let request_usage = data
-        .provider_request_body
-        .as_ref()
-        .or(data.request_body.as_ref())
-        .and_then(estimate_request_usage);
-
-    if positive_tokens(data.input_tokens) == 0 {
-        if let Some(usage) = request_usage.as_ref() {
-            data.input_tokens = Some(usage.input_tokens);
-        }
-    }
-
-    if !provider_usage_available {
-        apply_cancelled_request_cache_estimate(data, request_usage.as_ref());
-    }
-
-    if positive_tokens(data.output_tokens) == 0 {
-        if let Some(output_tokens) = data
-            .response_body
-            .as_ref()
-            .or(data.client_response_body.as_ref())
-            .and_then(estimate_response_output_tokens)
-        {
-            data.output_tokens = Some(output_tokens);
-        }
-    }
-
-    if positive_tokens(data.total_tokens) == 0 {
-        let total_tokens =
-            positive_tokens(data.input_tokens).saturating_add(positive_tokens(data.output_tokens));
-        if total_tokens > 0 {
-            data.total_tokens = Some(total_tokens);
-        }
-    }
-}
-
 fn apply_completed_image_usage_estimate(data: &mut UsageEventData) {
     if !usage_event_data_is_image(data) {
         return;
@@ -2387,7 +2341,7 @@ fn apply_completed_image_usage_estimate(data: &mut UsageEventData) {
             data.input_tokens = Some(usage.input_tokens);
         }
     }
-    apply_cancelled_request_cache_estimate(data, request_usage.as_ref());
+    apply_request_cache_usage_estimate(data, request_usage.as_ref());
     if positive_tokens(data.total_tokens) == 0 {
         let total_tokens =
             positive_tokens(data.input_tokens).saturating_add(positive_tokens(data.output_tokens));
@@ -2525,7 +2479,7 @@ fn usage_event_data_is_image(data: &UsageEventData) -> bool {
             .is_some_and(|value| value.eq_ignore_ascii_case("image"))
 }
 
-fn apply_cancelled_request_cache_estimate(
+fn apply_request_cache_usage_estimate(
     data: &mut UsageEventData,
     request_usage: Option<&EstimatedRequestUsage>,
 ) {
@@ -2690,280 +2644,6 @@ fn estimate_text_tokens(text: &str) -> u64 {
     } else {
         chars.div_ceil(4).max(1)
     }
-}
-
-#[derive(Default)]
-struct StreamOutputEstimate {
-    text: String,
-    saw_delta: bool,
-}
-
-impl StreamOutputEstimate {
-    fn push_delta(&mut self, text: &str) {
-        if text.is_empty() {
-            return;
-        }
-        self.saw_delta = true;
-        self.text.push_str(text);
-    }
-
-    fn push_done(&mut self, text: &str) {
-        if text.is_empty() || self.saw_delta {
-            return;
-        }
-        self.text.push_str(text);
-    }
-}
-
-fn estimate_response_output_tokens(value: &Value) -> Option<u64> {
-    let mut estimate = StreamOutputEstimate::default();
-    collect_stream_output_text(value, &mut estimate);
-    let tokens = estimate_text_tokens(estimate.text.as_str());
-    (tokens > 0).then_some(tokens)
-}
-
-fn collect_stream_output_text(value: &Value, estimate: &mut StreamOutputEstimate) {
-    match value {
-        Value::String(text) => {
-            for_each_sse_payload(text, |payload| {
-                if payload == "[DONE]" {
-                    return;
-                }
-                if let Ok(json_body) = serde_json::from_str::<Value>(payload) {
-                    collect_stream_output_text(&json_body, estimate);
-                }
-            });
-        }
-        Value::Array(items) => {
-            for item in items {
-                collect_stream_output_text(item, estimate);
-            }
-        }
-        Value::Object(object) => {
-            if let Some(chunks) = object.get("chunks").and_then(Value::as_array) {
-                for chunk in chunks {
-                    collect_stream_output_text(chunk, estimate);
-                }
-                return;
-            }
-            collect_openai_responses_output_text(object, estimate);
-            collect_openai_chat_output_text(object, estimate);
-            collect_claude_output_text(object, estimate);
-            collect_gemini_output_text(object, estimate);
-        }
-        _ => {}
-    }
-}
-
-fn collect_openai_responses_output_text(
-    object: &Map<String, Value>,
-    estimate: &mut StreamOutputEstimate,
-) {
-    match object
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-    {
-        "response.output_text.delta" | "response.outtext.delta" => {
-            if let Some(text) = openai_delta_text(object.get("delta")) {
-                estimate.push_delta(text.as_str());
-            }
-        }
-        "response.reasoning_summary_text.delta" | "response.function_call_arguments.delta" => {
-            if let Some(text) = object.get("delta").and_then(Value::as_str) {
-                estimate.push_delta(text);
-            }
-        }
-        "response.output_text.done" | "response.reasoning_summary_text.done" => {
-            if let Some(text) = object
-                .get("text")
-                .and_then(Value::as_str)
-                .or_else(|| part_text(object.get("part")))
-            {
-                estimate.push_done(text);
-            }
-        }
-        "response.function_call_arguments.done" => {
-            if let Some(text) = object.get("arguments").and_then(Value::as_str) {
-                estimate.push_done(text);
-            }
-        }
-        "response.output_item.done" => {
-            if let Some(item) = object.get("item").and_then(Value::as_object) {
-                collect_openai_responses_output_item_text(item, estimate);
-            }
-        }
-        "response.completed" => {
-            if let Some(response) = object.get("response").and_then(Value::as_object) {
-                collect_openai_responses_completed_text(response, estimate);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn collect_openai_responses_completed_text(
-    response: &Map<String, Value>,
-    estimate: &mut StreamOutputEstimate,
-) {
-    for item in response
-        .get("output")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_object)
-    {
-        collect_openai_responses_output_item_text(item, estimate);
-    }
-}
-
-fn collect_openai_responses_output_item_text(
-    item: &Map<String, Value>,
-    estimate: &mut StreamOutputEstimate,
-) {
-    match item.get("type").and_then(Value::as_str).unwrap_or_default() {
-        "message" => {
-            for content in item
-                .get("content")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_object)
-            {
-                if content.get("type").and_then(Value::as_str) == Some("output_text") {
-                    if let Some(text) = content.get("text").and_then(Value::as_str) {
-                        estimate.push_done(text);
-                    }
-                }
-            }
-        }
-        "reasoning" => {
-            for summary in item
-                .get("summary")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_object)
-            {
-                if let Some(text) = summary.get("text").and_then(Value::as_str) {
-                    estimate.push_done(text);
-                }
-            }
-        }
-        "function_call" => {
-            if let Some(arguments) = item.get("arguments").and_then(Value::as_str) {
-                estimate.push_done(arguments);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn collect_openai_chat_output_text(
-    object: &Map<String, Value>,
-    estimate: &mut StreamOutputEstimate,
-) {
-    for choice in object
-        .get("choices")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_object)
-    {
-        if let Some(delta) = choice.get("delta").and_then(Value::as_object) {
-            if let Some(content) = delta.get("content").and_then(Value::as_str) {
-                estimate.push_delta(content);
-            }
-            if let Some(reasoning_content) = delta.get("reasoning_content").and_then(Value::as_str)
-            {
-                estimate.push_delta(reasoning_content);
-            }
-            for tool_call in delta
-                .get("tool_calls")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_object)
-            {
-                if let Some(arguments) = tool_call
-                    .get("function")
-                    .and_then(Value::as_object)
-                    .and_then(|function| function.get("arguments"))
-                    .and_then(Value::as_str)
-                {
-                    estimate.push_delta(arguments);
-                }
-            }
-        }
-    }
-}
-
-fn collect_claude_output_text(object: &Map<String, Value>, estimate: &mut StreamOutputEstimate) {
-    if object.get("type").and_then(Value::as_str) != Some("content_block_delta") {
-        return;
-    }
-    let Some(delta) = object.get("delta").and_then(Value::as_object) else {
-        return;
-    };
-    match delta
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-    {
-        "text_delta" => {
-            if let Some(text) = delta.get("text").and_then(Value::as_str) {
-                estimate.push_delta(text);
-            }
-        }
-        "thinking_delta" => {
-            if let Some(text) = delta.get("thinking").and_then(Value::as_str) {
-                estimate.push_delta(text);
-            }
-        }
-        "input_json_delta" => {
-            if let Some(text) = delta.get("partial_json").and_then(Value::as_str) {
-                estimate.push_delta(text);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn collect_gemini_output_text(object: &Map<String, Value>, estimate: &mut StreamOutputEstimate) {
-    for part in object
-        .get("candidates")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|candidate| candidate.get("content"))
-        .filter_map(Value::as_object)
-        .filter_map(|content| content.get("parts"))
-        .filter_map(Value::as_array)
-        .flatten()
-        .filter_map(Value::as_object)
-    {
-        if let Some(text) = part.get("text").and_then(Value::as_str) {
-            estimate.push_delta(text);
-        }
-    }
-}
-
-fn openai_delta_text(value: Option<&Value>) -> Option<String> {
-    match value {
-        Some(Value::String(text)) => Some(text.clone()),
-        Some(Value::Object(object)) => object
-            .get("text")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned),
-        _ => None,
-    }
-}
-
-fn part_text(value: Option<&Value>) -> Option<&str> {
-    value
-        .and_then(Value::as_object)
-        .and_then(|part| part.get("text"))
-        .and_then(Value::as_str)
 }
 
 fn extract_token_counts_from_json(value: &Value) -> Option<(u64, u64, u64)> {
@@ -3543,7 +3223,7 @@ mod tests {
     }
 
     #[test]
-    fn cancelled_stream_usage_estimates_tokens_from_request_and_partial_response() {
+    fn cancelled_stream_usage_does_not_estimate_tokens_from_request_or_partial_response() {
         let plan = ExecutionPlan {
             request_id: "req-stream-cancelled-estimated-usage-1".to_string(),
             candidate_id: Some("cand-stream-cancelled-estimated-usage-1".to_string()),
@@ -3602,16 +3282,14 @@ mod tests {
                 .expect("usage event should build");
 
         assert_eq!(event.event_type, UsageEventType::Cancelled);
-        assert!(event.data.input_tokens.unwrap_or_default() > 0);
-        assert_eq!(event.data.output_tokens, Some(5));
-        assert_eq!(
-            event.data.total_tokens,
-            Some(event.data.input_tokens.unwrap_or_default() + 5)
-        );
+        assert_eq!(event.data.input_tokens, None);
+        assert_eq!(event.data.output_tokens, None);
+        assert_eq!(event.data.total_tokens, None);
+        assert_eq!(event.data.cache_read_input_tokens, None);
     }
 
     #[test]
-    fn cancelled_stream_usage_does_not_infer_cache_read_from_prompt_cache_key() {
+    fn cancelled_stream_usage_does_not_infer_cache_or_token_estimates_from_prompt_cache_key() {
         let request_body = json!({
             "model": "gpt-5.4",
             "input": "Use the cached project context and answer briefly",
@@ -3662,15 +3340,81 @@ mod tests {
         let event =
             build_stream_terminal_usage_event(&plan, payload.report_context.as_ref(), &payload)
                 .expect("usage event should build");
-        let input_tokens = event
-            .data
-            .input_tokens
-            .expect("input estimate should exist");
 
         assert_eq!(event.event_type, UsageEventType::Cancelled);
+        assert_eq!(event.data.input_tokens, None);
+        assert_eq!(event.data.output_tokens, None);
+        assert_eq!(event.data.total_tokens, None);
         assert_eq!(event.data.cache_read_input_tokens, None);
-        assert_eq!(event.data.output_tokens, Some(4));
-        assert_eq!(event.data.total_tokens, Some(input_tokens + 4));
+    }
+
+    #[test]
+    fn cancelled_stream_usage_preserves_terminal_summary_usage() {
+        let plan = ExecutionPlan {
+            request_id: "req-stream-cancelled-summary-usage-1".to_string(),
+            candidate_id: Some("cand-stream-cancelled-summary-usage-1".to_string()),
+            provider_name: Some("OpenAI".to_string()),
+            provider_id: "provider-1".to_string(),
+            endpoint_id: "endpoint-1".to_string(),
+            key_id: "key-1".to_string(),
+            method: "POST".to_string(),
+            url: "https://example.com/v1/responses".to_string(),
+            headers: BTreeMap::new(),
+            content_type: Some("application/json".to_string()),
+            content_encoding: None,
+            body: RequestBody::from_json(json!({
+                "model": "gpt-5.4",
+                "input": "This cancelled request has terminal upstream usage",
+                "stream": true
+            })),
+            stream: true,
+            client_api_format: "openai:responses".to_string(),
+            provider_api_format: "openai:responses".to_string(),
+            model_name: Some("gpt-5.4".to_string()),
+            proxy: None,
+            transport_profile: None,
+            timeouts: None,
+        };
+        let mut standardized_usage = StandardizedUsage::new();
+        standardized_usage.input_tokens = 13;
+        standardized_usage.output_tokens = 21;
+        standardized_usage.cache_creation_tokens = 2;
+        standardized_usage.cache_read_tokens = 3;
+        let payload = GatewayStreamReportRequest {
+            trace_id: "trace-stream-cancelled-summary-usage-1".to_string(),
+            report_kind: "openai_responses_stream_cancelled".to_string(),
+            report_context: Some(json!({
+                "client_api_format": "openai:responses",
+                "provider_api_format": "openai:responses"
+            })),
+            status_code: 499,
+            headers: BTreeMap::new(),
+            provider_body_base64: None,
+            provider_body_state: Some(UsageBodyCaptureState::None),
+            client_body_base64: None,
+            client_body_state: Some(UsageBodyCaptureState::None),
+            terminal_summary: Some(ExecutionStreamTerminalSummary {
+                standardized_usage: Some(standardized_usage),
+                finish_reason: None,
+                response_id: Some("resp_cancel_summary_1".to_string()),
+                model: Some("gpt-5.4".to_string()),
+                observed_finish: true,
+                unknown_event_count: 0,
+                parser_error: None,
+            }),
+            telemetry: None,
+        };
+
+        let event =
+            build_stream_terminal_usage_event(&plan, payload.report_context.as_ref(), &payload)
+                .expect("usage event should build");
+
+        assert_eq!(event.event_type, UsageEventType::Cancelled);
+        assert_eq!(event.data.input_tokens, Some(13));
+        assert_eq!(event.data.output_tokens, Some(21));
+        assert_eq!(event.data.total_tokens, Some(34));
+        assert_eq!(event.data.cache_creation_input_tokens, Some(2));
+        assert_eq!(event.data.cache_read_input_tokens, Some(3));
     }
 
     #[test]
