@@ -4773,8 +4773,19 @@ async fn gateway_handles_gemini_cli_test_model_with_oauth_header_fallback() {
             assert_eq!(plan.provider_api_format, "gemini:generate_content");
             assert_eq!(
                 plan.url,
-                "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent"
+                "https://cloudcode-pa.googleapis.com/v1internal:generateContent"
             );
+            assert_eq!(
+                plan.body.json_body.as_ref().unwrap()["project"],
+                json!("project-1")
+            );
+            assert_eq!(
+                plan.body.json_body.as_ref().unwrap()["model"],
+                json!("gemini-2.5-pro")
+            );
+            assert!(plan.body.json_body.as_ref().unwrap()["request"]
+                .get("contents")
+                .is_some());
             assert_eq!(
                 plan.headers.get("authorization").map(String::as_str),
                 Some("Bearer cached-gemini-cli-token")
@@ -4818,7 +4829,7 @@ async fn gateway_handles_gemini_cli_test_model_with_oauth_header_fallback() {
     key.encrypted_auth_config = Some(
         aether_crypto::encrypt_python_fernet_plaintext(
             DEVELOPMENT_ENCRYPTION_KEY,
-            r#"{"provider_type":"gemini_cli"}"#,
+            r#"{"provider_type":"gemini_cli","project_id":"project-1"}"#,
         )
         .expect("auth config should encrypt"),
     );
@@ -4828,7 +4839,7 @@ async fn gateway_handles_gemini_cli_test_model_with_oauth_header_fallback() {
             "endpoint-gemini-cli",
             "provider-gemini",
             "gemini:generate_content",
-            "https://generativelanguage.googleapis.com",
+            "https://cloudcode-pa.googleapis.com",
         )],
         vec![key],
     ));

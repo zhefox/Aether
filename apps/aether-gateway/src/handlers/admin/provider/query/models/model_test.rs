@@ -2836,6 +2836,33 @@ async fn provider_query_execute_standard_test_candidate(
         upstream_is_stream,
         require_body_stream_field,
     );
+    if crate::provider_transport::is_gemini_cli_provider_transport(&transport)
+        && normalized_provider_api_format == "gemini:generate_content"
+    {
+        let Some(project_id) = crate::provider_transport::resolve_gemini_cli_project_id(&transport)
+        else {
+            return Ok(provider_query_skipped_execution_outcome(
+                provider_request_body,
+                "Gemini CLI project_id is unavailable for v1internal request",
+            ));
+        };
+        provider_request_body = match crate::provider_transport::build_gemini_cli_v1internal_request(
+            project_id.as_str(),
+            trace_id,
+            request_model,
+            &provider_request_body,
+        ) {
+            crate::provider_transport::GeminiCliRequestEnvelopeSupport::Supported(envelope) => {
+                envelope
+            }
+            crate::provider_transport::GeminiCliRequestEnvelopeSupport::Unsupported(_) => {
+                return Ok(provider_query_skipped_execution_outcome(
+                    provider_request_body,
+                    "Gemini CLI v1internal envelope could not be built",
+                ));
+            }
+        };
+    }
 
     let uses_vertex_query_auth =
         crate::provider_transport::uses_vertex_api_key_query_auth(&transport, provider_api_format);
@@ -2956,6 +2983,13 @@ async fn provider_query_execute_standard_test_candidate(
     request_headers
         .entry("content-type".to_string())
         .or_insert_with(|| "application/json".to_string());
+    if crate::provider_transport::is_gemini_cli_provider_transport(&transport)
+        && normalized_provider_api_format == "gemini:generate_content"
+    {
+        request_headers
+            .entry("user-agent".to_string())
+            .or_insert_with(|| crate::provider_transport::GEMINI_CLI_USER_AGENT.to_string());
+    }
     let protected_headers = if uses_vertex_query_auth {
         vec!["content-type"]
     } else {

@@ -51,6 +51,7 @@ fn sample_openai_image_transport(provider_type: &str) -> AdminGatewayProviderTra
             expires_at_unix_secs: None,
             proxy: None,
             fingerprint: None,
+            upstream_metadata: None,
             decrypted_api_key: String::new(),
             decrypted_auth_config: Some(
                 json!({

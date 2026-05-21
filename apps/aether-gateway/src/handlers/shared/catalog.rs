@@ -1318,6 +1318,7 @@ fn build_gemini_cli_quota_status_snapshot(
         "reset_at": reset_at,
         "reset_seconds": reset_seconds,
         "plan_type": serde_json::Value::Null,
+        "credits": metadata.get("credits").cloned().unwrap_or(serde_json::Value::Null),
         "windows": windows,
     }))
 }
