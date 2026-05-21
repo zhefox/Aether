@@ -2376,22 +2376,8 @@ mod tests {
     #[test]
     fn rate_limit_policy_uses_highest_group_limit_before_user_restriction() {
         let groups = vec![
-            sample_group(
-                "default",
-                10,
-                None,
-                "unrestricted",
-                Some(30),
-                "custom",
-            ),
-            sample_group(
-                "tier-1",
-                20,
-                None,
-                "unrestricted",
-                Some(100),
-                "custom",
-            ),
+            sample_group("default", 10, None, "unrestricted", Some(30), "custom"),
+            sample_group("tier-1", 20, None, "unrestricted", Some(100), "custom"),
         ];
 
         assert_eq!(
@@ -2403,22 +2389,8 @@ mod tests {
     #[test]
     fn rate_limit_unlimited_group_overrides_limited_groups() {
         let groups = vec![
-            sample_group(
-                "default",
-                10,
-                None,
-                "unrestricted",
-                Some(30),
-                "custom",
-            ),
-            sample_group(
-                "tier-2",
-                20,
-                None,
-                "unrestricted",
-                Some(0),
-                "custom",
-            ),
+            sample_group("default", 10, None, "unrestricted", Some(30), "custom"),
+            sample_group("tier-2", 20, None, "unrestricted", Some(0), "custom"),
         ];
 
         assert_eq!(
