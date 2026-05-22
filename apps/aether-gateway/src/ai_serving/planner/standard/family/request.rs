@@ -12,27 +12,28 @@ use crate::ai_serving::planner::common::{
     endpoint_config_forces_body_stream_field, enforce_provider_body_stream_policy,
     request_requires_body_stream_field, resolve_upstream_is_stream_for_provider,
 };
+use crate::ai_serving::planner::gemini_cli::{
+    build_gemini_cli_v1internal_payload, GeminiCliV1InternalPayloadError,
+};
 use crate::ai_serving::planner::spec_metadata::local_standard_spec_metadata;
 use crate::ai_serving::planner::standard::{
     apply_codex_openai_responses_special_headers, request_body_build_failure_extra_data,
 };
-use crate::ai_serving::transport::gemini_cli::resolve_gemini_cli_project_id;
 use crate::ai_serving::transport::kiro::{
     build_kiro_provider_headers, build_kiro_provider_request_body,
     is_kiro_claude_messages_transport, KiroProviderHeadersInput, KiroRequestAuth,
     KIRO_ENVELOPE_NAME,
 };
 use crate::ai_serving::transport::{
-    build_gemini_cli_v1internal_request, build_grok_browser_headers, build_grok_upstream_url,
-    build_kiro_cross_format_upstream_url, build_openai_image_headers,
-    build_openai_image_upstream_url, build_standard_provider_request_headers,
-    build_windsurf_cascade_headers, build_windsurf_cascade_request_body,
-    build_windsurf_cascade_upstream_url, is_gemini_cli_provider_transport,
-    is_windsurf_provider_transport,
+    build_grok_browser_headers, build_grok_upstream_url, build_kiro_cross_format_upstream_url,
+    build_openai_image_headers, build_openai_image_upstream_url,
+    build_standard_provider_request_headers, build_windsurf_cascade_headers,
+    build_windsurf_cascade_request_body, build_windsurf_cascade_upstream_url,
+    is_gemini_cli_provider_transport, is_windsurf_provider_transport,
     local_windsurf_request_transport_unsupported_reason_with_network,
     openai_image_transport_unsupported_reason, resolve_grok_session_auth,
-    resolve_openai_image_auth, GeminiCliRequestEnvelopeSupport, GrokHeaderInput,
-    ProviderOpenAiImageHeadersInput, StandardProviderRequestHeadersInput, GEMINI_CLI_USER_AGENT,
+    resolve_openai_image_auth, GrokHeaderInput, ProviderOpenAiImageHeadersInput,
+    StandardProviderRequestHeadersInput, GEMINI_CLI_USER_AGENT,
     GEMINI_CLI_V1INTERNAL_ENVELOPE_NAME, GROK_CHAT_PATH, WINDSURF_ENVELOPE_NAME,
 };
 use crate::ai_serving::{
@@ -755,43 +756,30 @@ async fn build_gemini_cli_cross_format_payload_parts(
 ) -> Option<LocalStandardCandidatePayloadParts> {
     let candidate = &attempt.eligible.candidate;
     let effective_headers = input.effective_headers(&parts.headers);
-    let mut resolved_transport = Arc::clone(transport);
-    let project_id = match resolve_gemini_cli_project_id(&resolved_transport) {
-        Some(project_id) => Some(project_id),
-        None => match state
-            .hydrate_gemini_cli_project_metadata_for_transport(&resolved_transport)
-            .await
-        {
-            Some(hydrated) => {
-                let project_id = resolve_gemini_cli_project_id(&hydrated);
-                resolved_transport = Arc::new(hydrated);
-                project_id
-            }
-            None => None,
-        },
-    };
-    let Some(project_id) = project_id else {
-        mark_skipped_local_standard_candidate(
-            state,
-            input,
-            trace_id,
-            candidate,
-            attempt.candidate_index,
-            &attempt.candidate_id,
-            "transport_auth_unavailable",
-        )
-        .await;
-        return None;
-    };
-
-    let provider_request_body = match build_gemini_cli_v1internal_request(
-        &project_id,
+    let resolved = match build_gemini_cli_v1internal_payload(
+        state,
+        transport,
         trace_id,
         &mapped_model,
         &gemini_request_body,
-    ) {
-        GeminiCliRequestEnvelopeSupport::Supported(envelope) => envelope,
-        GeminiCliRequestEnvelopeSupport::Unsupported(_) => {
+    )
+    .await
+    {
+        Ok(resolved) => resolved,
+        Err(GeminiCliV1InternalPayloadError::ProjectUnavailable) => {
+            mark_skipped_local_standard_candidate(
+                state,
+                input,
+                trace_id,
+                candidate,
+                attempt.candidate_index,
+                &attempt.candidate_id,
+                "transport_auth_unavailable",
+            )
+            .await;
+            return None;
+        }
+        Err(GeminiCliV1InternalPayloadError::EnvelopeUnsupported) => {
             mark_skipped_local_standard_candidate_with_extra_data(
                 state,
                 input,
@@ -810,6 +798,8 @@ async fn build_gemini_cli_cross_format_payload_parts(
             return None;
         }
     };
+    let provider_request_body = resolved.body;
+    let resolved_transport = resolved.transport;
 
     let upstream_url = match crate::ai_serving::planner::standard::build_standard_upstream_url(
         parts,

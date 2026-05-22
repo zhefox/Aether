@@ -14,6 +14,9 @@ use crate::ai_serving::planner::common::{
     endpoint_config_forces_body_stream_field, enforce_provider_body_stream_policy,
     request_requires_body_stream_field, resolve_upstream_is_stream_for_provider,
 };
+use crate::ai_serving::planner::gemini_cli::{
+    build_gemini_cli_v1internal_payload, GeminiCliV1InternalPayloadError,
+};
 use crate::ai_serving::planner::spec_metadata::local_openai_responses_spec_metadata;
 use crate::ai_serving::planner::standard::{
     apply_codex_openai_responses_special_body_edits, apply_codex_openai_responses_special_headers,
@@ -41,11 +44,12 @@ use crate::ai_serving::transport::{
     build_openai_image_headers, build_openai_image_upstream_url,
     build_standard_provider_request_headers, build_windsurf_cascade_headers,
     build_windsurf_cascade_request_body, build_windsurf_cascade_upstream_url,
-    is_windsurf_provider_transport, local_standard_transport_unsupported_reason_with_network,
+    is_gemini_cli_provider_transport, is_windsurf_provider_transport,
+    local_standard_transport_unsupported_reason_with_network,
     local_windsurf_request_transport_unsupported_reason_with_network,
     openai_image_transport_unsupported_reason, resolve_openai_image_auth, GrokHeaderInput,
-    ProviderOpenAiImageHeadersInput, StandardProviderRequestHeadersInput, GROK_CHAT_PATH,
-    WINDSURF_ENVELOPE_NAME,
+    ProviderOpenAiImageHeadersInput, StandardProviderRequestHeadersInput, GEMINI_CLI_USER_AGENT,
+    GEMINI_CLI_V1INTERNAL_ENVELOPE_NAME, GROK_CHAT_PATH, WINDSURF_ENVELOPE_NAME,
 };
 use crate::ai_serving::{
     ai_local_execution_contract_for_formats, request_conversion_direct_auth,
@@ -475,6 +479,29 @@ pub(crate) async fn resolve_local_openai_responses_candidate_payload_parts(
         )
         .await;
     }
+    if provider_api_format == "gemini:generate_content"
+        && is_gemini_cli_provider_transport(transport)
+    {
+        return build_gemini_cli_openai_responses_payload_parts(
+            state,
+            parts,
+            trace_id,
+            body_json,
+            input,
+            eligible,
+            candidate_index,
+            candidate_id,
+            spec_metadata.api_format,
+            transport,
+            provider_api_format,
+            mapped_model,
+            auth_header,
+            auth_value,
+            provider_request_body,
+            upstream_is_stream,
+        )
+        .await;
+    }
 
     let Some(upstream_url) = (if is_grok && is_grok_text_provider_api_format(provider_api_format) {
         Some(build_grok_upstream_url(transport, GROK_CHAT_PATH))
@@ -643,6 +670,165 @@ pub(crate) async fn resolve_local_openai_responses_candidate_payload_parts(
         upstream_is_stream,
         transport: Arc::clone(transport),
         transport_profile,
+        image_request_summary: None,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn build_gemini_cli_openai_responses_payload_parts(
+    state: &AppState,
+    parts: &http::request::Parts,
+    trace_id: &str,
+    original_body_json: &serde_json::Value,
+    input: &LocalOpenAiResponsesDecisionInput,
+    eligible: &EligibleLocalExecutionCandidate,
+    candidate_index: u32,
+    candidate_id: &str,
+    client_api_format: &str,
+    transport: &Arc<GatewayProviderTransportSnapshot>,
+    provider_api_format: &str,
+    mapped_model: String,
+    auth_header: String,
+    auth_value: String,
+    gemini_request_body: Value,
+    upstream_is_stream: bool,
+) -> Option<LocalOpenAiResponsesCandidatePayloadParts> {
+    let candidate = &eligible.candidate;
+    let effective_headers = input.effective_headers(&parts.headers);
+    let resolved = match build_gemini_cli_v1internal_payload(
+        state,
+        transport,
+        trace_id,
+        &mapped_model,
+        &gemini_request_body,
+    )
+    .await
+    {
+        Ok(resolved) => resolved,
+        Err(GeminiCliV1InternalPayloadError::ProjectUnavailable) => {
+            mark_skipped_local_openai_responses_candidate(
+                state,
+                input,
+                trace_id,
+                candidate,
+                candidate_index,
+                candidate_id,
+                "transport_auth_unavailable",
+            )
+            .await;
+            return None;
+        }
+        Err(GeminiCliV1InternalPayloadError::EnvelopeUnsupported) => {
+            mark_skipped_local_openai_responses_candidate_with_extra_data(
+                state,
+                input,
+                trace_id,
+                candidate,
+                candidate_index,
+                candidate_id,
+                "provider_request_body_build_failed",
+                request_body_build_failure_extra_data(
+                    original_body_json,
+                    client_api_format,
+                    provider_api_format,
+                ),
+            )
+            .await;
+            return None;
+        }
+    };
+    let provider_request_body = resolved.body;
+    let resolved_transport = resolved.transport;
+
+    let Some(upstream_url) = build_cross_format_openai_responses_upstream_url(
+        parts,
+        &resolved_transport,
+        &mapped_model,
+        client_api_format,
+        provider_api_format,
+        upstream_is_stream,
+    ) else {
+        mark_skipped_local_openai_responses_candidate_with_failure_diagnostic(
+            state,
+            input,
+            trace_id,
+            candidate,
+            candidate_index,
+            candidate_id,
+            "upstream_url_missing",
+            CandidateFailureDiagnostic::upstream_url_missing(
+                client_api_format,
+                provider_api_format,
+                "openai_responses_gemini_cli_url",
+            ),
+        )
+        .await;
+        return None;
+    };
+
+    let extra_headers =
+        BTreeMap::from([("user-agent".to_string(), GEMINI_CLI_USER_AGENT.to_string())]);
+    let Some(resolved_headers) =
+        build_standard_provider_request_headers(StandardProviderRequestHeadersInput {
+            transport: &resolved_transport,
+            provider_api_format,
+            same_format: false,
+            headers: effective_headers,
+            auth_header: &auth_header,
+            auth_value: &auth_value,
+            extra_headers: &extra_headers,
+            header_rules: resolved_transport.endpoint.header_rules.as_ref(),
+            provider_request_body: &provider_request_body,
+            original_request_body: original_body_json,
+            upstream_is_stream,
+        })
+    else {
+        mark_skipped_local_openai_responses_candidate_with_failure_diagnostic(
+            state,
+            input,
+            trace_id,
+            candidate,
+            candidate_index,
+            candidate_id,
+            "transport_header_rules_apply_failed",
+            CandidateFailureDiagnostic::header_rules_apply_failed(
+                client_api_format,
+                provider_api_format,
+                "openai_responses_gemini_cli_headers",
+            ),
+        )
+        .await;
+        return None;
+    };
+    let mut provider_request_headers = resolved_headers.headers;
+    apply_codex_openai_responses_special_headers(
+        &mut provider_request_headers,
+        &provider_request_body,
+        effective_headers,
+        resolved_transport.provider.provider_type.as_str(),
+        provider_api_format,
+        Some(trace_id),
+        resolved_transport.key.decrypted_auth_config.as_deref(),
+    );
+
+    let (execution_strategy, conversion_mode) =
+        ai_local_execution_contract_for_formats(client_api_format, provider_api_format);
+
+    Some(LocalOpenAiResponsesCandidatePayloadParts {
+        auth_header: resolved_headers.auth_header,
+        auth_value: resolved_headers.auth_value,
+        mapped_model,
+        provider_api_format: provider_api_format.to_string(),
+        provider_request_body,
+        provider_request_headers,
+        upstream_url,
+        execution_strategy,
+        conversion_mode,
+        is_antigravity: false,
+        envelope_name: Some(GEMINI_CLI_V1INTERNAL_ENVELOPE_NAME),
+        upstream_is_stream,
+        transport: resolved_transport,
+        transport_profile: None,
         image_request_summary: None,
     })
 }
