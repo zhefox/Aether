@@ -193,8 +193,10 @@ append_server_config() {
   quoted_url=$(toml_quote "$aether_url")
   quoted_token=$(toml_quote "$management_token")
   quoted_name=$(toml_quote "$node_name")
-  quoted_security=$(toml_quote "$tunnel_security")
   quoted_encryption_key=$(toml_quote "$tunnel_encryption_key")
+  if [ -n "$tunnel_security" ]; then
+    quoted_security=$(toml_quote "$tunnel_security")
+  fi
 
   if has_legacy_single_server_keys; then
     fail "现有配置仍使用旧的顶层 aether_url/management_token，请先运行 aether-tunnel setup 迁移为 [[servers]] 后重试：$CONFIG_PATH"
@@ -218,7 +220,9 @@ append_server_config() {
     printf 'aether_url = %s\n' "$quoted_url"
     printf 'management_token = %s\n' "$quoted_token"
     printf 'node_name = %s\n' "$quoted_name"
-    printf 'tunnel_security = %s\n' "$quoted_security"
+    if [ -n "$tunnel_security" ]; then
+      printf 'tunnel_security = %s\n' "$quoted_security"
+    fi
     if [ -n "$tunnel_encryption_key" ]; then
       printf 'tunnel_encryption_key = %s\n' "$quoted_encryption_key"
     fi
@@ -235,10 +239,10 @@ main() {
   aether_url=$(prompt_if_empty AETHER_TUNNEL_AETHER_URL "${AETHER_TUNNEL_AETHER_URL:-}" "Aether URL: ")
   management_token=$(prompt_if_empty AETHER_TUNNEL_MANAGEMENT_TOKEN "${AETHER_TUNNEL_MANAGEMENT_TOKEN:-}" "Management token (ae_xxx): ")
   node_name=$(prompt_if_empty AETHER_TUNNEL_NODE_NAME "${AETHER_TUNNEL_NODE_NAME:-}" "Node name: ")
-  tunnel_security="${AETHER_TUNNEL_SECURITY:-off}"
+  tunnel_security="${AETHER_TUNNEL_SECURITY:-}"
   tunnel_encryption_key="${AETHER_TUNNEL_ENCRYPTION_KEY:-}"
   case "$tunnel_security" in
-    off|non_tls_required) ;;
+    ""|off|non_tls_required) ;;
     *) fail "AETHER_TUNNEL_SECURITY 必须是 off 或 non_tls_required" ;;
   esac
   if [ "$tunnel_security" = "non_tls_required" ] && [ -z "$tunnel_encryption_key" ]; then

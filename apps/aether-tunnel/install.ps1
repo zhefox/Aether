@@ -116,7 +116,6 @@ function Add-ServerConfig([string]$AetherUrl, [string]$ManagementToken, [string]
   $QuotedUrl = ConvertTo-TomlQuotedString $AetherUrl
   $QuotedToken = ConvertTo-TomlQuotedString $ManagementToken
   $QuotedName = ConvertTo-TomlQuotedString $NodeName
-  $QuotedTunnelSecurity = ConvertTo-TomlQuotedString $TunnelSecurity
   $QuotedTunnelEncryptionKey = ConvertTo-TomlQuotedString $TunnelEncryptionKey
 
   if (Test-ServerExists $script:ConfigPath $QuotedUrl $QuotedName) {
@@ -134,9 +133,12 @@ function Add-ServerConfig([string]$AetherUrl, [string]$ManagementToken, [string]
     '[[servers]]',
     "aether_url = $QuotedUrl",
     "management_token = $QuotedToken",
-    "node_name = $QuotedName",
-    "tunnel_security = $QuotedTunnelSecurity"
+    "node_name = $QuotedName"
   ) -join "`n"
+  if ($TunnelSecurity) {
+    $QuotedTunnelSecurity = ConvertTo-TomlQuotedString $TunnelSecurity
+    $Block += "`ntunnel_security = $QuotedTunnelSecurity"
+  }
   if ($TunnelEncryptionKey) {
     $Block += "`ntunnel_encryption_key = $QuotedTunnelEncryptionKey"
   }
@@ -149,9 +151,9 @@ function Main {
   $AetherUrl = Prompt-IfEmpty 'AETHER_TUNNEL_AETHER_URL' $env:AETHER_TUNNEL_AETHER_URL 'Aether URL'
   $ManagementToken = Prompt-IfEmpty 'AETHER_TUNNEL_MANAGEMENT_TOKEN' $env:AETHER_TUNNEL_MANAGEMENT_TOKEN 'Management token (ae_xxx)'
   $NodeName = Prompt-IfEmpty 'AETHER_TUNNEL_NODE_NAME' $env:AETHER_TUNNEL_NODE_NAME 'Node name'
-  $TunnelSecurity = if ($env:AETHER_TUNNEL_SECURITY) { $env:AETHER_TUNNEL_SECURITY } else { 'off' }
+  $TunnelSecurity = if ($env:AETHER_TUNNEL_SECURITY) { $env:AETHER_TUNNEL_SECURITY } else { '' }
   $TunnelEncryptionKey = if ($env:AETHER_TUNNEL_ENCRYPTION_KEY) { $env:AETHER_TUNNEL_ENCRYPTION_KEY } else { '' }
-  if ($TunnelSecurity -notin @('off', 'non_tls_required')) {
+  if ($TunnelSecurity -and ($TunnelSecurity -notin @('off', 'non_tls_required'))) {
     Fail 'AETHER_TUNNEL_SECURITY must be off or non_tls_required'
   }
   if (($TunnelSecurity -eq 'non_tls_required') -and -not $TunnelEncryptionKey) {

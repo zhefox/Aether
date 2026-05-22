@@ -289,8 +289,10 @@ pub fn effective_tunnel_security(
     configured: Option<TunnelSecurity>,
     tunnel_encryption_key: Option<&str>,
 ) -> TunnelSecurity {
-    if configured == Some(TunnelSecurity::NonTlsRequired) {
-        return TunnelSecurity::NonTlsRequired;
+    match configured {
+        Some(TunnelSecurity::NonTlsRequired) => return TunnelSecurity::NonTlsRequired,
+        Some(TunnelSecurity::Off) => return TunnelSecurity::Off,
+        None => {}
     }
     if aether_url.trim_start().starts_with("http://")
         && tunnel_encryption_key
@@ -738,12 +740,7 @@ impl Config {
         if self.node_name.trim().is_empty() {
             anyhow::bail!("node_name must not be empty");
         }
-        let effective_security = effective_tunnel_security(
-            &self.aether_url,
-            Some(self.tunnel_security),
-            self.tunnel_encryption_key.as_deref(),
-        );
-        if effective_security == TunnelSecurity::NonTlsRequired {
+        if self.tunnel_security == TunnelSecurity::NonTlsRequired {
             let Some(key) = normalized_proxy_url(&self.tunnel_encryption_key) else {
                 anyhow::bail!(
                     "tunnel_encryption_key must be set when tunnel_security=non_tls_required"
@@ -1796,14 +1793,22 @@ node_name = "tunnel-test"
         assert_eq!(
             effective_tunnel_security(
                 &config.aether_url,
-                Some(config.tunnel_security),
+                None,
                 config.tunnel_encryption_key.as_deref(),
             ),
             TunnelSecurity::NonTlsRequired
         );
+        assert_eq!(
+            effective_tunnel_security(
+                &config.aether_url,
+                Some(TunnelSecurity::Off),
+                config.tunnel_encryption_key.as_deref(),
+            ),
+            TunnelSecurity::Off
+        );
         config
             .validate()
-            .expect("http URL with PSK should infer secure tunnel mode");
+            .expect("http URL with PSK should validate when tunnel_security is off");
     }
 
     #[test]
@@ -1816,6 +1821,8 @@ node_name = "tunnel-test"
             "ae_test",
             "--node-name",
             "tunnel-test",
+            "--tunnel-security",
+            "non_tls_required",
             "--tunnel-encryption-key",
             "not-a-valid-32-byte-key",
         ]);

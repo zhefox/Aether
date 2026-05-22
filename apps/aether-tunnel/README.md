@@ -113,7 +113,7 @@ sudo aether-tunnel uninstall
 | `--aether-url` | `AETHER_TUNNEL_AETHER_URL` | **必填** | Aether 服务器地址 |
 | `--management-token` | `AETHER_TUNNEL_MANAGEMENT_TOKEN` | **必填** | 管理员 Token（`ae_xxx` 格式） |
 | `--node-name` | `AETHER_TUNNEL_NODE_NAME` | **必填** | 节点名称标识 |
-| `--tunnel-security` | `AETHER_TUNNEL_SECURITY` | `off` | Aether ↔ tunnel 通道安全模式；支持 `off` / `non_tls_required`；`http://` 且提供 key 时会自动按 `non_tls_required` 生效 |
+| `--tunnel-security` | `AETHER_TUNNEL_SECURITY` | `off` | Aether ↔ tunnel 通道安全模式；支持 `off` / `non_tls_required`；在 `[[servers]]` 中省略该字段且 `http://` 提供 key 时会自动按 `non_tls_required` 生效 |
 | `--tunnel-encryption-key` | `AETHER_TUNNEL_ENCRYPTION_KEY` | 空 | secure tunnel 使用的长期 PSK（base64 32-byte），每个 `[[servers]]` 节点独立配置 |
 | `--public-ip` | `AETHER_TUNNEL_PUBLIC_IP` | 自动检测 | 公网 IP |
 | `--node-region` | `AETHER_TUNNEL_NODE_REGION` | 自动检测 | 地区标识 |
@@ -231,7 +231,7 @@ tunnel_encryption_key = "base64-32-bytes"
 
 `tunnel_security = "non_tls_required"` 是非 TLS secure tunnel 的 MVP 配置面：它要求同时提供当前 `[[servers]]` 条目的 `tunnel_encryption_key`，后续握手使用 `node_name` / `X-Node-Id` 查找对应 PSK，不引入 `tunnel_encryption_key_id`。`wss://` 仍是推荐方案；`ws:// + secure tunnel` 只保护 Aether ↔ tunnel 之间的 token 和 payload，不等价于 HTTPS 伪装，也不覆盖 tunnel ↔ origin/provider 这段链路。
 
-如果 `aether_url` 使用 `http://` 且当前 `[[servers]]` 条目提供了 `tunnel_encryption_key`，即使省略或保留 `tunnel_security = "off"`，运行时也会自动按 `non_tls_required` 生效。secure tunnel 会在 WebSocket tunnel 上加密所有二进制 tunnel frame；未配置 key 的旧节点仍按原明文协议工作。
+如果 `aether_url` 使用 `http://` 且当前 `[[servers]]` 条目提供了 `tunnel_encryption_key`，省略 `tunnel_security` 时运行时会自动按 `non_tls_required` 生效；显式配置 `tunnel_security = "off"` 会关闭该自动推断。secure tunnel 会在 WebSocket tunnel 上加密所有二进制 tunnel frame；未配置 key 或显式关闭的旧节点仍按原明文协议工作。
 
 ## 发布新版本
 

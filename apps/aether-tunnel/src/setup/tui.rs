@@ -96,10 +96,10 @@ impl ServerTab {
                 Field {
                     label: "Tunnel Security",
                     key: "tunnel_security",
-                    value: "off".into(),
+                    value: String::new(),
                     kind: FieldKind::Text,
                     required: false,
-                    help: "off or non_tls_required; http:// plus a key auto-enables secure tunnel",
+                    help: "off or non_tls_required; omit to auto-enable for http:// plus a key",
                 },
                 Field {
                     label: "Tunnel Encryption Key",
@@ -1178,6 +1178,15 @@ mod tests {
             cfg.servers[0].tunnel_encryption_key.as_deref(),
             Some("base64-32-bytes")
         );
+    }
+
+    #[test]
+    fn to_config_omits_blank_tunnel_security_for_auto_inference() {
+        let app = sample_app();
+
+        let cfg = app.to_config().expect("config should serialize");
+        assert_eq!(cfg.servers.len(), 1);
+        assert_eq!(cfg.servers[0].tunnel_security, None);
     }
 
     #[test]
