@@ -5,6 +5,7 @@ services:
   postgres:
     image: postgres:15
     container_name: aether-postgres
+    shm_size: ${POSTGRES_SHM_SIZE:-512mb}
     environment:
       POSTGRES_DB: aether
       POSTGRES_USER: postgres
