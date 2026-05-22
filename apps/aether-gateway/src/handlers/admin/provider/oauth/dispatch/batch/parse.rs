@@ -447,6 +447,7 @@ fn parse_error_entry(error: String) -> AdminProviderOAuthBatchImportEntry {
         user_id: None,
         email: None,
         account_name: None,
+        project_id: None,
         sso_rw_token: None,
         cf_cookies: None,
         cf_clearance: None,
