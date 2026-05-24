@@ -3409,8 +3409,14 @@ SELECT
   COUNT(*) AS request_count,
   COALESCE(SUM({success_flag_expr}), 0) AS success_count,
   COALESCE(SUM({error_flag_expr}), 0) AS error_count,
-  COALESCE(SUM(MAX(COALESCE(total_tokens, 0), 0)), 0) AS total_tokens,
-  COALESCE(SUM(COALESCE(CAST(total_cost_usd AS REAL), 0)), 0) AS total_cost_usd,
+  COALESCE(SUM(CASE
+    WHEN status IN ('pending', 'streaming') THEN 0
+    ELSE MAX(COALESCE(total_tokens, 0), 0)
+  END), 0) AS total_tokens,
+  COALESCE(SUM(CASE
+    WHEN status IN ('pending', 'streaming') THEN 0
+    ELSE COALESCE(CAST(total_cost_usd AS REAL), 0)
+  END), 0) AS total_cost_usd,
   COALESCE(SUM(CASE
     WHEN {success_flag_expr} = 1 AND response_time_ms IS NOT NULL
     THEN MAX(COALESCE(response_time_ms, 0), 0)

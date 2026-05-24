@@ -1145,9 +1145,6 @@ fn apply_chatgpt_web_image_quota_request_delta_to_metadata(
                 .zip(used)
                 .map(|(limit, used)| (limit - used).max(0.0))
         });
-    let Some(remaining) = remaining else {
-        return false;
-    };
     let limit = chatgpt_web_image_quota_request_limit_choice(
         metadata,
         status_snapshot,
@@ -1155,13 +1152,22 @@ fn apply_chatgpt_web_image_quota_request_delta_to_metadata(
         snapshot_limit,
         remaining,
     );
+    if limit.is_none()
+        && chatgpt_web_image_quota_metadata_limit_is_legacy_free_default(
+            metadata,
+            status_snapshot,
+            metadata_limit,
+            remaining,
+        )
+    {
+        metadata.remove("image_quota_total");
+        metadata.remove("image_quota_limit_source");
+    }
     let limit_value = limit
         .as_ref()
         .map(|limit| limit.value)
-        .unwrap_or(remaining.max(0.0));
-    let new_remaining = (remaining - 1.0).max(0.0);
+        .unwrap_or_else(|| remaining.unwrap_or(0.0).max(0.0));
 
-    metadata.insert("image_quota_remaining".to_string(), json!(new_remaining));
     if limit_value > 0.0 {
         metadata.insert("image_quota_total".to_string(), json!(limit_value));
         if let Some(source) = limit
@@ -1171,12 +1177,32 @@ fn apply_chatgpt_web_image_quota_request_delta_to_metadata(
         {
             metadata.insert("image_quota_limit_source".to_string(), json!(source));
         }
-        metadata.insert(
-            "image_quota_used".to_string(),
-            json!((limit_value - new_remaining).max(0.0)),
-        );
-    } else if let Some(used) = used {
-        metadata.insert("image_quota_used".to_string(), json!(used + 1.0));
+    }
+    match remaining {
+        Some(remaining) => {
+            let new_remaining = (remaining - 1.0).max(0.0);
+            metadata.insert("image_quota_remaining".to_string(), json!(new_remaining));
+            if limit_value > 0.0 {
+                metadata.insert(
+                    "image_quota_used".to_string(),
+                    json!((limit_value - new_remaining).max(0.0)),
+                );
+            } else if let Some(used) = used {
+                metadata.insert("image_quota_used".to_string(), json!(used + 1.0));
+            } else {
+                metadata.insert("image_quota_used".to_string(), json!(1.0));
+            }
+        }
+        None => {
+            let new_used = used.unwrap_or(0.0).max(0.0) + 1.0;
+            metadata.insert("image_quota_used".to_string(), json!(new_used));
+            if limit_value > 0.0 {
+                metadata.insert(
+                    "image_quota_remaining".to_string(),
+                    json!((limit_value - new_used).max(0.0)),
+                );
+            }
+        }
     }
     if !metadata.contains_key("image_quota_reset_at") {
         if let Some(reset_at) =
@@ -1227,12 +1253,35 @@ struct ChatGptWebImageQuotaRequestLimit {
     source: Option<String>,
 }
 
+fn chatgpt_web_image_quota_metadata_limit_is_legacy_free_default(
+    metadata: &Map<String, Value>,
+    status_snapshot: Option<&Value>,
+    metadata_limit: Option<f64>,
+    remaining: Option<f64>,
+) -> bool {
+    let Some(limit) = metadata_limit else {
+        return false;
+    };
+    let plan_type = chatgpt_web_image_quota_metadata_str(metadata, "plan_type").or_else(|| {
+        chatgpt_web_image_quota_snapshot(status_snapshot)
+            .and_then(|quota| chatgpt_web_image_quota_metadata_str(quota, "plan_type"))
+    });
+    let metadata_limit_source =
+        chatgpt_web_image_quota_metadata_str(metadata, "image_quota_limit_source");
+    chatgpt_web_image_quota_limit_is_legacy_free_default(
+        limit,
+        metadata_limit_source,
+        plan_type,
+        remaining,
+    )
+}
+
 fn chatgpt_web_image_quota_request_limit_choice(
     metadata: &Map<String, Value>,
     status_snapshot: Option<&Value>,
     metadata_limit: Option<f64>,
     snapshot_limit: Option<f64>,
-    remaining: f64,
+    remaining: Option<f64>,
 ) -> Option<ChatGptWebImageQuotaRequestLimit> {
     let plan_type = chatgpt_web_image_quota_metadata_str(metadata, "plan_type").or_else(|| {
         chatgpt_web_image_quota_snapshot(status_snapshot)
@@ -1251,7 +1300,7 @@ fn chatgpt_web_image_quota_request_limit_choice(
             let source = metadata_limit_source.map(ToOwned::to_owned).or_else(|| {
                 let is_first_remaining = plan_type
                     .is_some_and(|value| value.eq_ignore_ascii_case("free"))
-                    && (limit - remaining).abs() <= f64::EPSILON;
+                    && remaining.is_some_and(|remaining| (limit - remaining).abs() <= f64::EPSILON);
                 Some(
                     if is_first_remaining {
                         "first_remaining"
@@ -1279,11 +1328,9 @@ fn chatgpt_web_image_quota_request_limit_choice(
     }
 
     remaining
-        .is_finite()
-        .then_some(remaining)
-        .filter(|value| *value > 0.0)
-        .map(|value| ChatGptWebImageQuotaRequestLimit {
-            value,
+        .filter(|remaining| remaining.is_finite() && *remaining > 0.0)
+        .map(|remaining| ChatGptWebImageQuotaRequestLimit {
+            value: remaining,
             source: Some("first_remaining".to_string()),
         })
 }
@@ -1303,7 +1350,7 @@ fn chatgpt_web_image_quota_limit_is_legacy_free_default(
     limit: f64,
     source: Option<&str>,
     plan_type: Option<&str>,
-    remaining: f64,
+    remaining: Option<f64>,
 ) -> bool {
     let plan_type_is_free = plan_type
         .map(str::trim)
@@ -1314,7 +1361,7 @@ fn chatgpt_web_image_quota_limit_is_legacy_free_default(
     if (limit - 25.0).abs() > f64::EPSILON {
         return false;
     }
-    remaining < limit
+    remaining.is_none_or(|remaining| remaining.is_finite() && remaining < limit)
 }
 
 async fn refresh_chatgpt_web_image_quota_after_success(
@@ -2843,6 +2890,40 @@ mod tests {
     }
 
     #[test]
+    fn chatgpt_web_image_quota_request_delta_records_unknown_quota_use() {
+        let mut metadata = Map::new();
+
+        assert!(apply_chatgpt_web_image_quota_request_delta_to_metadata(
+            &mut metadata,
+            None,
+            1_000,
+            None,
+        ));
+
+        assert_eq!(metadata.get("image_quota_remaining"), None);
+        assert_eq!(metadata.get("image_quota_total"), None);
+        assert_eq!(metadata["image_quota_used"], json!(1.0));
+        assert_eq!(metadata["image_quota_local_request_count"], json!(1u64));
+        assert_eq!(metadata["updated_at"], json!(1_000u64));
+    }
+
+    #[test]
+    fn chatgpt_web_image_quota_request_delta_derives_remaining_from_limit_only() {
+        let mut metadata = Map::from_iter([("image_quota_total".to_string(), json!(10.0))]);
+
+        assert!(apply_chatgpt_web_image_quota_request_delta_to_metadata(
+            &mut metadata,
+            None,
+            1_000,
+            None,
+        ));
+
+        assert_eq!(metadata["image_quota_remaining"], json!(9.0));
+        assert_eq!(metadata["image_quota_total"], json!(10.0));
+        assert_eq!(metadata["image_quota_used"], json!(1.0));
+    }
+
+    #[test]
     fn chatgpt_web_image_quota_request_delta_ignores_legacy_free_25_limit() {
         let mut metadata = Map::from_iter([
             ("plan_type".to_string(), json!("free")),
@@ -2864,6 +2945,30 @@ mod tests {
         assert_eq!(
             metadata["image_quota_limit_source"],
             json!("first_remaining")
+        );
+    }
+
+    #[test]
+    fn chatgpt_web_image_quota_request_delta_ignores_legacy_free_25_without_remaining() {
+        let mut metadata = Map::from_iter([
+            ("plan_type".to_string(), json!("free")),
+            ("image_quota_total".to_string(), json!(25.0)),
+        ]);
+
+        assert!(apply_chatgpt_web_image_quota_request_delta_to_metadata(
+            &mut metadata,
+            None,
+            1_000,
+            None,
+        ));
+
+        assert_eq!(metadata.get("image_quota_remaining"), None);
+        assert_eq!(metadata.get("image_quota_total"), None);
+        assert_eq!(metadata["image_quota_used"], json!(1.0));
+        assert_eq!(
+            metadata.get("image_quota_limit_source"),
+            None,
+            "legacy free default should not become a first observed limit without remaining"
         );
     }
 

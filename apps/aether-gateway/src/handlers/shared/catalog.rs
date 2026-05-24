@@ -482,7 +482,7 @@ fn chatgpt_web_image_quota_limit_is_legacy_free_default(
     if (limit - 25.0).abs() > f64::EPSILON {
         return false;
     }
-    remaining.is_some_and(|value| value < limit)
+    remaining.is_none_or(|value| value < limit)
 }
 
 fn model_quota_window_snapshot(

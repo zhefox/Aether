@@ -325,7 +325,7 @@ fn is_legacy_chatgpt_web_free_default_limit_value(
     if (value - 25.0).abs() > f64::EPSILON {
         return false;
     }
-    remaining.is_some_and(|remaining| remaining < value)
+    remaining.is_none_or(|remaining| remaining < value)
 }
 
 pub(crate) fn quota_exhausted_from_bucket(bucket: &Map<String, Value>) -> bool {
