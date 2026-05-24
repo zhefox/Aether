@@ -2053,12 +2053,13 @@ fn add_unique_values(values: &mut Vec<String>, incoming: impl IntoIterator<Item 
 fn build_success_sse(
     request: &ChatGptWebImageRequest,
     image: &DownloadedImage,
-    _report_context: Option<&Value>,
+    report_context: Option<&Value>,
 ) -> String {
     let response_id = format!("resp_{}", Uuid::new_v4().simple());
     let item_id = format!("ig_{}", Uuid::new_v4().simple());
     let created_at = current_unix_secs() as i64;
     let output_format = output_format_from_mime(&image.mime, request.output_format.as_str());
+    let usage = chatgpt_web_image_usage(request, image, report_context);
     let item = json!({
         "id": item_id,
         "type": "image_generation_call",
@@ -2098,14 +2099,120 @@ fn build_success_sse(
                 "height": image.height,
                 "revised_prompt": Value::Null
             }],
-            "usage": Value::Null,
-            "tool_usage": Value::Null
+            "usage": usage.0,
+            "tool_usage": usage.1
         }
     });
     format!(
         "event: response.created\ndata: {}\n\nevent: response.output_item.done\ndata: {}\n\nevent: response.completed\ndata: {}\n\ndata: [DONE]\n\n",
         created, done, completed
     )
+}
+
+fn chatgpt_web_image_usage(
+    request: &ChatGptWebImageRequest,
+    image: &DownloadedImage,
+    report_context: Option<&Value>,
+) -> (Value, Value) {
+    let input_tokens = chatgpt_web_image_input_tokens(request, report_context);
+    let estimated_output_tokens = chatgpt_web_image_output_tokens(image);
+    let usage = json!({
+        "input_tokens": input_tokens,
+        "output_tokens": estimated_output_tokens,
+        "total_tokens": input_tokens.saturating_add(estimated_output_tokens),
+    });
+    let tool_usage = json!({
+        "image_gen": {
+            "input_tokens": input_tokens,
+            "input_tokens_details": {
+                "image_tokens": 0,
+                "text_tokens": input_tokens
+            },
+            "output_tokens": estimated_output_tokens,
+            "output_tokens_details": {
+                "image_tokens": 0,
+                "text_tokens": estimated_output_tokens
+            },
+            "total_tokens": input_tokens.saturating_add(estimated_output_tokens),
+        }
+    });
+    (usage, tool_usage)
+}
+
+fn chatgpt_web_image_input_tokens(
+    request: &ChatGptWebImageRequest,
+    report_context: Option<&Value>,
+) -> u64 {
+    let prompt = chatgpt_web_image_prompt_text(request, report_context);
+    estimate_text_tokens(prompt.as_str())
+}
+
+fn chatgpt_web_image_output_tokens(image: &DownloadedImage) -> u64 {
+    estimate_text_tokens(image.b64_json.as_str())
+}
+
+fn chatgpt_web_report_context_image_request_text(
+    report_context: Option<&Value>,
+    key: &str,
+) -> Option<String> {
+    report_context
+        .and_then(|value| value.get("image_request"))
+        .and_then(|value| value.get(key))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn chatgpt_web_report_context_original_request_text(
+    report_context: Option<&Value>,
+    key: &str,
+) -> Option<String> {
+    let original = report_context?.get("original_request_body")?;
+    value_text(original.get(key)).or_else(|| {
+        chatgpt_web_original_image_tool_value(original, key)
+            .and_then(|value| value_text(Some(value)))
+    })
+}
+
+fn chatgpt_web_original_image_tool_value<'a>(original: &'a Value, key: &str) -> Option<&'a Value> {
+    original
+        .get("tools")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter(|tool| {
+            tool.get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|value| value.trim().eq_ignore_ascii_case("image_generation"))
+        })
+        .find_map(|tool| tool.get(key))
+}
+
+fn chatgpt_web_image_prompt_text(
+    request: &ChatGptWebImageRequest,
+    report_context: Option<&Value>,
+) -> String {
+    chatgpt_web_report_context_original_request_text(report_context, "prompt")
+        .or_else(|| chatgpt_web_report_context_image_request_text(report_context, "prompt"))
+        .unwrap_or_else(|| request.prompt.clone())
+}
+
+fn value_text(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn estimate_text_tokens(text: &str) -> u64 {
+    let chars = text.chars().count() as u64;
+    if chars == 0 {
+        0
+    } else {
+        chars.div_ceil(4).max(1)
+    }
 }
 
 fn build_failed_sse(request: &ChatGptWebImageRequest, failure: &Value) -> String {
@@ -2317,11 +2424,22 @@ fn chatgpt_web_image_request_context(plan: &ExecutionPlan) -> Option<Value> {
         "operation".to_string(),
         Value::String("generate".to_string()),
     );
-    for key in ["model", "size", "quality", "output_format"] {
+    for key in [
+        "model",
+        "size",
+        "quality",
+        "ratio",
+        "output_format",
+        "partial_images",
+    ] {
         if let Some(value) = body.get(key).and_then(Value::as_str).map(str::trim) {
             if !value.is_empty() {
                 image_request.insert(key.to_string(), Value::String(value.to_string()));
             }
+            continue;
+        }
+        if let Some(value) = body.get(key).and_then(Value::as_u64) {
+            image_request.insert(key.to_string(), Value::Number(value.into()));
         }
     }
     Some(Value::Object(image_request))
@@ -2757,6 +2875,106 @@ mod tests {
             transport_profile: None,
             timeouts: None,
         }
+    }
+
+    fn completed_response_from_sse(sse: &str) -> Value {
+        sse.lines()
+            .find_map(|line| {
+                let payload = line.strip_prefix("data: ")?;
+                let event = serde_json::from_str::<Value>(payload).ok()?;
+                (event.get("type").and_then(Value::as_str) == Some("response.completed"))
+                    .then_some(event)
+            })
+            .and_then(|event| event.get("response").cloned())
+            .expect("completed response should be present")
+    }
+
+    #[test]
+    fn chatgpt_web_success_sse_includes_estimated_image_usage() {
+        let output_text = "aGVsbG8=".repeat(128);
+        let request = ChatGptWebImageRequest {
+            model: "gpt-image-2".to_string(),
+            web_model: "gpt-5-5-thinking".to_string(),
+            prompt: "draw a test image".to_string(),
+            size: "1024x1024".to_string(),
+            ratio: "1:1".to_string(),
+            output_format: "png".to_string(),
+            images: Vec::new(),
+        };
+        let image = DownloadedImage {
+            b64_json: output_text.clone(),
+            mime: "image/png".to_string(),
+            width: Some(1024),
+            height: Some(1024),
+        };
+        let body = build_success_sse(
+            &request,
+            &image,
+            Some(&json!({
+                "image_request": {
+                    "size": "1024x1024",
+                    "quality": "low"
+                }
+            })),
+        );
+        let completed = completed_response_from_sse(body.as_str());
+        let input_tokens = estimate_text_tokens("draw a test image");
+        let output_tokens = estimate_text_tokens(output_text.as_str());
+
+        assert_eq!(completed["usage"]["input_tokens"], json!(input_tokens));
+        assert_eq!(completed["usage"]["output_tokens"], json!(output_tokens));
+        assert_eq!(
+            completed["tool_usage"]["image_gen"]["output_tokens"],
+            json!(output_tokens)
+        );
+        assert_eq!(
+            completed["tool_usage"]["image_gen"]["input_tokens_details"]["text_tokens"],
+            json!(input_tokens)
+        );
+        assert_eq!(
+            completed["tool_usage"]["image_gen"]["output_tokens_details"]["text_tokens"],
+            json!(output_tokens)
+        );
+        assert_eq!(
+            completed["usage"]["total_tokens"],
+            json!(input_tokens.saturating_add(output_tokens))
+        );
+    }
+
+    #[test]
+    fn chatgpt_web_success_sse_counts_output_text_not_dimensions() {
+        let output_text = "iVBORw0KGgoAAAANSUhEUgAA".repeat(64);
+        let request = ChatGptWebImageRequest {
+            model: "gpt-image-2".to_string(),
+            web_model: "gpt-5-5-thinking".to_string(),
+            prompt: "draw a test image".to_string(),
+            size: "1024x1024".to_string(),
+            ratio: "1:1".to_string(),
+            output_format: "png".to_string(),
+            images: Vec::new(),
+        };
+        let image = DownloadedImage {
+            b64_json: output_text.clone(),
+            mime: "image/png".to_string(),
+            width: Some(1402),
+            height: Some(1122),
+        };
+        let body = build_success_sse(
+            &request,
+            &image,
+            Some(&json!({
+                "image_request": {
+                    "size": "1024x1024",
+                    "quality": "low"
+                }
+            })),
+        );
+        let completed = completed_response_from_sse(body.as_str());
+
+        assert_eq!(
+            completed["usage"]["output_tokens"],
+            json!(estimate_text_tokens(output_text.as_str()))
+        );
     }
 
     #[test]
@@ -3208,8 +3426,19 @@ data: [DONE]
         assert!(body.contains("\"type\":\"image_generation_call\""));
         assert!(body.contains("\"width\":2"));
         assert!(body.contains("\"height\":3"));
-        assert!(body
-            .contains(&base64::engine::general_purpose::STANDARD.encode(png_header_bytes(2, 3))));
+        let expected_output_text =
+            base64::engine::general_purpose::STANDARD.encode(png_header_bytes(2, 3));
+        let expected_output_tokens = estimate_text_tokens(expected_output_text.as_str());
+        assert!(body.contains(&expected_output_text));
+        let completed = completed_response_from_sse(body.as_str());
+        assert_eq!(
+            completed["usage"]["output_tokens"],
+            json!(expected_output_tokens)
+        );
+        assert_eq!(
+            completed["tool_usage"]["image_gen"]["output_tokens"],
+            json!(expected_output_tokens)
+        );
 
         handle.abort();
     }
@@ -3274,11 +3503,25 @@ data: [DONE]
         assert!(decoded_data.contains("\"width\":2"));
         assert!(decoded_data.contains("\"height\":3"));
         assert!(text.contains("\"type\":\"eof\""));
+        let expected_output_tokens = estimate_text_tokens(
+            base64::engine::general_purpose::STANDARD
+                .encode(png_header_bytes(2, 3))
+                .as_str(),
+        );
         let eof_frame = text
             .lines()
             .filter_map(|line| serde_json::from_str::<Value>(line).ok())
             .find(|frame| frame.get("type").and_then(Value::as_str) == Some("eof"))
             .expect("eof frame should exist");
+        assert_eq!(
+            eof_frame
+                .get("payload")
+                .and_then(|payload| payload.get("summary"))
+                .and_then(|summary| summary.get("standardized_usage"))
+                .and_then(|usage| usage.get("output_tokens"))
+                .and_then(Value::as_i64),
+            i64::try_from(expected_output_tokens).ok()
+        );
         assert_eq!(
             eof_frame
                 .get("payload")
