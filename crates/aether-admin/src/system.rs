@@ -735,6 +735,7 @@ const DEFAULT_BARK_API_BASE: &str = "https://api.day.app";
 const SENSITIVE_SYSTEM_CONFIG_KEYS: &[&str] = &[
     "smtp_password",
     "turnstile_secret_key",
+    "backup_s3_secret_access_key",
     "module.server_chan_push.send_key",
     "module.important_notification.server_chan_send_key",
     "module.bark_push.device_key",
@@ -1671,6 +1672,24 @@ pub fn admin_system_config_default_value(key: &str) -> Option<serde_json::Value>
         "turnstile_site_key" => Some(serde_json::Value::Null),
         "turnstile_secret_key" => Some(serde_json::Value::Null),
         "turnstile_allowed_hostnames" => Some(json!([])),
+        "backup_s3_enabled" => Some(json!(false)),
+        "backup_s3_scope" => Some(json!("data")),
+        "backup_s3_endpoint" => Some(serde_json::Value::Null),
+        "backup_s3_region" => Some(json!("auto")),
+        "backup_s3_bucket" => Some(serde_json::Value::Null),
+        "backup_s3_prefix" => Some(json!("aether/backups/")),
+        "backup_s3_access_key_id" => Some(serde_json::Value::Null),
+        "backup_s3_secret_access_key" => Some(serde_json::Value::Null),
+        "backup_s3_path_style" => Some(json!(true)),
+        "backup_s3_compression" => Some(json!("zstd")),
+        "backup_s3_schedule_unit" => Some(json!("days")),
+        "backup_s3_schedule_interval" => Some(json!(1)),
+        "backup_s3_schedule_minute" => Some(json!(0)),
+        "backup_s3_schedule_hour" => Some(json!(3)),
+        "backup_s3_schedule_weekday" => Some(json!(1)),
+        "backup_s3_schedule_month_day" => Some(json!(1)),
+        "backup_s3_retention_count" => Some(json!(7)),
+        "backup_s3_last_slot" => Some(serde_json::Value::Null),
         "email_suffix_mode" => Some(json!("none")),
         "email_suffix_list" => Some(json!([])),
         "enable_format_conversion" => Some(json!(false)),
@@ -3331,6 +3350,41 @@ mod tests {
     }
 
     #[test]
+    fn s3_backup_secret_access_key_is_sensitive() {
+        assert!(is_sensitive_admin_system_config_key(
+            "backup_s3_secret_access_key"
+        ));
+        assert!(is_sensitive_admin_system_config_key(
+            "BACKUP_S3_SECRET_ACCESS_KEY"
+        ));
+        assert!(!is_sensitive_admin_system_config_key("backup_s3_bucket"));
+    }
+
+    #[test]
+    fn s3_backup_defaults_match_admin_ui_contract() {
+        assert_eq!(
+            admin_system_config_default_value("backup_s3_scope"),
+            Some(json!("data"))
+        );
+        assert_eq!(
+            admin_system_config_default_value("backup_s3_schedule_unit"),
+            Some(json!("days"))
+        );
+        assert_eq!(
+            admin_system_config_default_value("backup_s3_schedule_interval"),
+            Some(json!(1))
+        );
+        assert_eq!(
+            admin_system_config_default_value("backup_s3_retention_count"),
+            Some(json!(7))
+        );
+        assert_eq!(
+            admin_system_config_default_value("backup_s3_path_style"),
+            Some(json!(true))
+        );
+    }
+
+    #[test]
     fn legacy_notification_email_config_key_normalizes_to_important_notification() {
         assert_eq!(
             normalize_admin_system_config_key("module.notification_email.enabled"),
@@ -3343,6 +3397,19 @@ mod tests {
                 "module.notification_email.enabled".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn s3_backup_secret_detail_is_write_only() {
+        let payload = build_admin_system_config_detail_payload(
+            "backup_s3_secret_access_key",
+            Some(json!("encrypted-secret")),
+        )
+        .expect("sensitive backup key should render");
+
+        assert_eq!(payload["key"], json!("backup_s3_secret_access_key"));
+        assert_eq!(payload["value"], serde_json::Value::Null);
+        assert_eq!(payload["is_set"], json!(true));
     }
 
     #[test]
