@@ -94,7 +94,7 @@ describe('endpoint default paths', () => {
     })).toBe('/responses')
   })
 
-  it('drops /v1 from Claude Messages defaults for v1 and unversioned api roots', () => {
+  it('keeps /v1 for Claude Messages defaults unless base URL already ends with v1', () => {
     expect(getDefaultEndpointPath({
       apiFormat: 'claude:messages',
       providerType: 'custom',
@@ -107,13 +107,13 @@ describe('endpoint default paths', () => {
       providerType: 'custom',
       baseUrl: 'https://proxy.example.com/api',
       apiFormats,
-    })).toBe('/messages')
+    })).toBe('/v1/messages')
 
     expect(getDefaultEndpointPath({
       apiFormat: 'claude:messages',
       providerType: 'custom',
       baseUrl: 'https://proxy.example.com/anthropic',
       apiFormats,
-    })).toBe('/messages')
+    })).toBe('/v1/messages')
   })
 })

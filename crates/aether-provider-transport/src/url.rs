@@ -80,7 +80,7 @@ fn openai_image_base_includes_operation_path(base_url: &str) -> bool {
 pub fn build_claude_messages_url(upstream_base_url: &str, query: Option<&str>) -> String {
     let (trimmed, base_query) = split_base_url_query(upstream_base_url);
     let trimmed = trimmed.trim_end_matches('/');
-    let mut url = if v1_compatible_base_includes_api_root(trimmed) {
+    let mut url = if trimmed.ends_with("/v1") {
         format!("{trimmed}/messages")
     } else {
         format!("{trimmed}/v1/messages")
@@ -524,11 +524,11 @@ mod tests {
         );
         assert_eq!(
             build_claude_messages_url("https://proxy.example.com/api", None),
-            "https://proxy.example.com/api/messages"
+            "https://proxy.example.com/api/v1/messages"
         );
         assert_eq!(
             build_claude_messages_url("https://proxy.example.com/anthropic", None),
-            "https://proxy.example.com/anthropic/messages"
+            "https://proxy.example.com/anthropic/v1/messages"
         );
         assert_eq!(
             build_claude_messages_url("https://api.anthropic.example", None),

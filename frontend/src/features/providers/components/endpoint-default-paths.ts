@@ -69,7 +69,7 @@ function openAiCompatibleBaseIncludesApiRoot(baseUrl?: string | null): boolean {
 }
 
 function v1CompatibleBaseIncludesApiRoot(baseUrl?: string | null): boolean {
-  return baseUrlEndsWithV1Root(baseUrl) || baseUrlHasPathApiRoot(baseUrl)
+  return baseUrlEndsWithV1Root(baseUrl)
 }
 
 function stripV1PrefixForApiRoot(path: string): string {

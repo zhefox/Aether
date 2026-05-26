@@ -74,8 +74,10 @@ pub fn build_models_fetch_url(
     let provider_type = provider_type.trim().to_ascii_lowercase();
     let url = if provider_type == "codex" && api_format.starts_with("openai:") {
         build_codex_models_url(base_url)
-    } else if api_format.starts_with("openai:") || api_format.starts_with("claude:") {
+    } else if api_format.starts_with("openai:") {
         build_v1_models_url(base_url)
+    } else if api_format.starts_with("claude:") {
+        build_claude_models_url(base_url)
     } else if api_format.starts_with("gemini:") {
         build_gemini_models_url(base_url)
     } else {
@@ -608,6 +610,51 @@ fn build_v1_models_url(base_url: &str) -> Option<String> {
     build_openai_compatible_models_url(base_url)
 }
 
+fn build_claude_models_url(base_url: &str) -> Option<String> {
+    if let Some(url) = build_deepseek_anthropic_models_url(base_url) {
+        return Some(url);
+    }
+
+    let (trimmed_base_url, base_query) = split_url_query(base_url);
+    let trimmed_base_url = trimmed_base_url.trim_end_matches('/');
+    if trimmed_base_url.is_empty() {
+        return None;
+    }
+
+    let mut url = if trimmed_base_url.ends_with("/v1") {
+        format!("{trimmed_base_url}/models")
+    } else {
+        format!("{trimmed_base_url}/v1/models")
+    };
+    if let Some(query) = base_query.filter(|value| !value.trim().is_empty()) {
+        url.push('?');
+        url.push_str(query);
+    }
+    Some(url)
+}
+
+pub fn deepseek_anthropic_models_fetch_uses_openai_auth(base_url: &str) -> bool {
+    build_deepseek_anthropic_models_url(base_url).is_some()
+}
+
+fn build_deepseek_anthropic_models_url(base_url: &str) -> Option<String> {
+    let (trimmed_base_url, base_query) = split_url_query(base_url);
+    let trimmed_base_url = trimmed_base_url.trim_end_matches('/');
+    let normalized = trimmed_base_url.to_ascii_lowercase();
+    if normalized != "https://api.deepseek.com/anthropic"
+        && normalized != "https://api.deepseek.com/anthropic/v1"
+    {
+        return None;
+    }
+
+    let mut url = "https://api.deepseek.com/models".to_string();
+    if let Some(query) = base_query.filter(|value| !value.trim().is_empty()) {
+        url.push('?');
+        url.push_str(query);
+    }
+    Some(url)
+}
+
 fn build_codex_models_url(base_url: &str) -> Option<String> {
     if let Some(url) = build_bigmodel_coding_models_url(base_url) {
         return Some(url);
@@ -1029,7 +1076,22 @@ mod tests {
                 "https://proxy.example.com/api"
             ),
             Some((
-                "https://proxy.example.com/api/models".to_string(),
+                "https://proxy.example.com/api/v1/models".to_string(),
+                "claude:messages".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn build_models_fetch_url_uses_deepseek_openai_models_for_anthropic_base() {
+        assert_eq!(
+            build_models_fetch_url(
+                "custom",
+                "claude:messages",
+                "https://api.deepseek.com/anthropic"
+            ),
+            Some((
+                "https://api.deepseek.com/models".to_string(),
                 "claude:messages".to_string()
             ))
         );

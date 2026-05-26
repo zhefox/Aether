@@ -295,9 +295,8 @@ async function fetchUpstreamModels() {
         .filter((m: UpstreamModel) => !existingModelIds.value.has(m.id))
         .map((m: UpstreamModel) => m.id)
       hasQueried.value = true
-      // 如果有部分失败，显示警告提示
-      if (result.error) {
-        showWarning(result.error, '部分格式获取失败')
+      if (result.warning) {
+        showWarning(result.warning, '部分格式获取失败')
       }
     } else if (result.error) {
       errorMessage.value = result.error

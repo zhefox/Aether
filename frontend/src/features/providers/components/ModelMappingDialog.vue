@@ -564,12 +564,11 @@ async function fetchUpstreamModels() {
       const mergedCustom = new Set([...allCustomNames.value, ...customFromSelected])
       allCustomNames.value = Array.from(mergedCustom).filter(name => !upstreamIds.has(name))
     }
+    if (result.warning) {
+      showWarning(result.warning, '部分格式获取失败')
+    }
     if (result.error) {
-      if (result.models.length > 0) {
-        showWarning(result.error, '部分格式获取失败')
-      } else {
-        showError(result.error, '获取上游模型失败')
-      }
+      showError(result.error, '获取上游模型失败')
     }
   } catch (err: unknown) {
     showError(parseApiError(err, '获取上游模型列表失败'), '错误')

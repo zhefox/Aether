@@ -568,6 +568,7 @@ export interface ProviderModelsQueryResponse {
       model_test_capabilities?: ModelTestCapabilities | null
     }>
     error?: string
+    warning?: string
     from_cache?: boolean
   }
   provider: {
