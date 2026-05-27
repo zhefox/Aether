@@ -5,27 +5,51 @@
       <TimeRangePicker
         v-model="timeRangeModel"
         :show-granularity="false"
+        class="hidden shrink-0 md:flex"
       />
 
       <!-- 分隔线 -->
       <div class="hidden sm:block h-4 w-px bg-border" />
 
       <!-- 通用搜索 -->
-      <div class="relative">
-        <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground z-10 pointer-events-none" />
-        <Input
-          id="usage-records-search"
-          v-model="localSearch"
-          :placeholder="isAdmin ? '搜索用户/密钥' : '搜索密钥/模型'"
-          class="w-[7.5rem] sm:w-48 h-8 text-xs border-border/60 pl-8"
-        />
+      <div class="order-1 flex w-full items-center gap-2 md:order-none md:w-auto">
+        <div class="relative min-w-0 flex-1 md:w-48 md:flex-none">
+          <Search class="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground z-10 pointer-events-none" />
+          <Input
+            id="usage-records-search"
+            v-model="localSearch"
+            :placeholder="isAdmin ? '搜索用户/密钥' : '搜索密钥/模型'"
+            class="h-8 w-full text-xs border-border/60 pl-8"
+          />
+        </div>
+        <Button
+          variant="ghost"
+          size="icon"
+          class="h-8 w-8 shrink-0 md:hidden"
+          :class="autoRefresh ? 'text-primary' : ''"
+          :title="autoRefresh ? '点击关闭自动刷新' : '点击开启自动刷新'"
+          @click="$emit('update:autoRefresh', !autoRefresh)"
+        >
+          <RefreshCcw
+            class="w-3.5 h-3.5"
+            :class="autoRefresh ? 'animate-spin' : ''"
+          />
+        </Button>
       </div>
 
-      <div class="contents md:hidden">
+      <div class="order-3 grid w-full grid-cols-2 gap-2 md:hidden">
+        <!-- 时间范围筛选 -->
+        <TimeRangePicker
+          v-model="timeRangeModel"
+          :show-granularity="false"
+          class="min-w-0"
+          preset-trigger-class="!w-full"
+        />
+
         <!-- 用户筛选（仅管理员可见） -->
         <ServerUserSelector
           v-if="isAdmin"
-          class="flex-1 min-w-0 sm:flex-none sm:w-40"
+          class="min-w-0"
           :model-value="filterUser"
           :initial-users="availableUsers"
           dropdown
@@ -37,7 +61,7 @@
           :model-value="filterModel"
           @update:model-value="$emit('update:filterModel', $event)"
         >
-          <SelectTrigger class="flex-1 min-w-0 sm:flex-none sm:w-40 h-8 text-xs border-border/60">
+          <SelectTrigger class="h-8 w-full min-w-0 text-xs border-border/60">
             <SelectValue placeholder="模型" />
           </SelectTrigger>
           <SelectContent>
@@ -60,7 +84,7 @@
           :model-value="filterProvider"
           @update:model-value="$emit('update:filterProvider', $event)"
         >
-          <SelectTrigger class="flex-1 min-w-0 sm:flex-none sm:w-32 h-8 text-xs border-border/60">
+          <SelectTrigger class="h-8 w-full min-w-0 text-xs border-border/60">
             <SelectValue placeholder="提供商" />
           </SelectTrigger>
           <SelectContent>
@@ -82,7 +106,7 @@
           :model-value="filterApiFormat"
           @update:model-value="$emit('update:filterApiFormat', $event)"
         >
-          <SelectTrigger class="flex-1 min-w-0 sm:flex-none sm:w-32 h-8 text-xs border-border/60">
+          <SelectTrigger class="h-8 w-full min-w-0 text-xs border-border/60">
             <SelectValue placeholder="格式" />
           </SelectTrigger>
           <SelectContent>
@@ -104,7 +128,7 @@
           :model-value="filterStatus"
           @update:model-value="$emit('update:filterStatus', $event)"
         >
-          <SelectTrigger class="flex-1 min-w-0 sm:flex-none sm:w-28 h-8 text-xs border-border/60">
+          <SelectTrigger class="h-8 w-full min-w-0 text-xs border-border/60">
             <SelectValue placeholder="状态" />
           </SelectTrigger>
           <SelectContent>
@@ -142,9 +166,10 @@
       <!-- 列显示配置（桌面端） -->
       <MultiSelect
         v-model="visibleColumnIds"
+        class="hidden md:block"
         :options="columnSelectOptions"
         placeholder="显示列"
-        trigger-class="hidden md:flex w-40 h-8 text-xs border-border/60"
+        trigger-class="w-40 h-8 text-xs border-border/60"
         dropdown-min-width="14rem"
         :searchable="false"
       />
@@ -156,7 +181,7 @@
       <Button
         variant="ghost"
         size="icon"
-        class="h-8 w-8"
+        class="hidden h-8 w-8 shrink-0 md:inline-flex"
         :class="autoRefresh ? 'text-primary' : ''"
         :title="autoRefresh ? '点击关闭自动刷新' : '点击开启自动刷新'"
         @click="$emit('update:autoRefresh', !autoRefresh)"

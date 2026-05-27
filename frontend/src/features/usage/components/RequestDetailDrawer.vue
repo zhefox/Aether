@@ -18,13 +18,13 @@
           <!-- 固定头部 - 整合基本信息 -->
           <div class="sticky top-0 z-10 bg-background border-b px-3 sm:px-6 py-3 sm:py-4 flex-shrink-0">
             <!-- 第一行：标题、模型、状态、操作按钮 -->
-            <div class="flex items-center justify-between gap-4 mb-3">
-              <div class="flex items-center gap-3 flex-wrap">
+            <div class="flex items-center justify-between gap-2 sm:gap-4 mb-3">
+              <div class="flex min-w-0 flex-1 items-center gap-2 sm:gap-3 flex-wrap">
                 <h3 class="text-lg font-semibold">
                   请求详情
                 </h3>
-                <div class="flex items-center gap-1 text-sm font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded">
-                  <span>{{ detail?.model || '-' }}</span>
+                <div class="flex min-w-0 max-w-[10rem] items-center gap-1 text-sm font-mono text-muted-foreground bg-muted px-2 py-0.5 rounded sm:max-w-none">
+                  <span class="truncate">{{ detail?.model || '-' }}</span>
                   <template v-if="detail?.target_model && detail.target_model !== detail.model">
                     <svg
                       xmlns="http://www.w3.org/2000/svg"
@@ -38,7 +38,7 @@
                         clip-rule="evenodd"
                       />
                     </svg>
-                    <span>{{ detail.target_model }}</span>
+                    <span class="truncate">{{ detail.target_model }}</span>
                   </template>
                 </div>
                 <Badge
@@ -112,20 +112,20 @@
             <!-- 第二行：关键元信息 -->
             <div
               v-if="detail"
-              class="flex items-center flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground"
+              class="flex items-center flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground sm:gap-x-4"
             >
-              <span class="flex items-center gap-1">
+              <span class="flex min-w-0 items-center gap-1">
                 <span class="font-medium text-foreground">ID:</span>
                 <span
                   class="font-mono"
                   :title="fullRequestId"
                 >{{ displayRequestId }}</span>
               </span>
-              <span class="opacity-40">|</span>
+              <span class="hidden opacity-40 sm:inline">|</span>
               <span>{{ formatDateTime(detail.created_at) }}</span>
-              <span class="opacity-40">|</span>
+              <span class="hidden opacity-40 sm:inline">|</span>
               <span>{{ formatApiFormat(detail.api_format) }}</span>
-              <span class="opacity-40">|</span>
+              <span class="hidden opacity-40 sm:inline">|</span>
               <span>用户: {{ detail.user?.username || 'Unknown' }}</span>
             </div>
           </div>
@@ -204,60 +204,55 @@
               <Card>
                 <div class="p-3 sm:p-4">
                   <!-- 总费用和响应时间（独立显示） -->
-                  <div class="flex items-center mb-4">
-                    <div class="flex items-center">
-                      <span class="text-xs text-muted-foreground w-[56px]">总费用</span>
-                      <span class="text-lg font-bold text-green-600 dark:text-green-400">
+                  <div
+                    class="grid gap-1.5 mb-4 sm:gap-2"
+                    :class="detailOutputRate != null ? 'grid-cols-3' : 'grid-cols-2'"
+                  >
+                    <div class="min-w-0 rounded-md border border-border/50 bg-muted/20 px-2 py-2 sm:px-3">
+                      <span class="mb-0.5 block truncate text-[10px] text-muted-foreground sm:text-xs">总费用</span>
+                      <span class="block truncate text-sm font-bold text-green-600 dark:text-green-400 sm:text-lg">
                         ${{ ((typeof detail.cost === 'object' ? detail.cost?.total : detail.cost) || detail.total_cost || 0).toFixed(6) }}
                       </span>
                     </div>
-                    <Separator
-                      orientation="vertical"
-                      class="h-6 mx-6"
-                    />
-                    <div class="flex items-center">
-                      <span class="text-xs text-muted-foreground w-[56px]">响应时间</span>
-                      <span class="text-lg font-bold">{{ detail.response_time_ms ? formatResponseTime(detail.response_time_ms).value : 'N/A' }}</span>
-                      <span class="text-sm text-muted-foreground ml-1">{{ detail.response_time_ms ? formatResponseTime(detail.response_time_ms).unit : '' }}</span>
+                    <div class="min-w-0 rounded-md border border-border/50 bg-muted/20 px-2 py-2 sm:px-3">
+                      <span class="mb-0.5 block truncate text-[10px] text-muted-foreground sm:text-xs">响应时间</span>
+                      <span class="text-sm font-bold sm:text-lg">{{ detail.response_time_ms ? formatResponseTime(detail.response_time_ms).value : 'N/A' }}</span>
+                      <span class="ml-0.5 text-[10px] text-muted-foreground sm:ml-1 sm:text-sm">{{ detail.response_time_ms ? formatResponseTime(detail.response_time_ms).unit : '' }}</span>
                     </div>
                     <template v-if="detailOutputRate != null">
-                      <Separator
-                        orientation="vertical"
-                        class="h-6 mx-6"
-                      />
-                      <div class="flex items-center">
-                        <span class="text-xs text-muted-foreground w-[56px]">输出速度</span>
-                        <span class="text-lg font-bold text-primary">{{ formatOutputRateValue(detailOutputRate) }}</span>
-                        <span class="text-sm text-muted-foreground ml-1">tps</span>
+                      <div class="min-w-0 rounded-md border border-border/50 bg-muted/20 px-2 py-2 sm:px-3">
+                        <span class="mb-0.5 block truncate text-[10px] text-muted-foreground sm:text-xs">输出速度</span>
+                        <span class="text-sm font-bold text-primary sm:text-lg">{{ formatOutputRateValue(detailOutputRate) }}</span>
+                        <span class="ml-0.5 text-[10px] text-muted-foreground sm:ml-1 sm:text-sm">tps</span>
                       </div>
                     </template>
                   </div>
 
                   <div
                     v-if="hasDetailPerformanceBreakdown"
-                    class="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-4 text-xs"
+                    class="grid grid-cols-3 gap-1.5 mb-4 text-xs sm:gap-2"
                   >
-                    <div class="rounded-md border border-border/50 bg-muted/20 px-3 py-2">
-                      <div class="text-muted-foreground mb-1">
+                    <div class="min-w-0 rounded-md border border-border/50 bg-muted/20 px-2 py-2 sm:px-3">
+                      <div class="mb-1 truncate text-[10px] text-muted-foreground sm:text-xs">
                         首字时间
                       </div>
-                      <div class="font-mono text-foreground">
+                      <div class="truncate font-mono text-xs text-foreground sm:text-sm">
                         {{ formatDurationMs(detail.first_byte_time_ms) }}
                       </div>
                     </div>
-                    <div class="rounded-md border border-border/50 bg-muted/20 px-3 py-2">
-                      <div class="text-muted-foreground mb-1">
+                    <div class="min-w-0 rounded-md border border-border/50 bg-muted/20 px-2 py-2 sm:px-3">
+                      <div class="mb-1 truncate text-[10px] text-muted-foreground sm:text-xs">
                         生成耗时
                       </div>
-                      <div class="font-mono text-foreground">
+                      <div class="truncate font-mono text-xs text-foreground sm:text-sm">
                         {{ formatDurationMs(detailGenerationTimeMs) }}
                       </div>
                     </div>
-                    <div class="rounded-md border border-border/50 bg-muted/20 px-3 py-2">
-                      <div class="text-muted-foreground mb-1">
+                    <div class="min-w-0 rounded-md border border-border/50 bg-muted/20 px-2 py-2 sm:px-3">
+                      <div class="mb-1 truncate text-[10px] text-muted-foreground sm:text-xs">
                         输出 Tokens
                       </div>
-                      <div class="font-mono text-foreground">
+                      <div class="truncate font-mono text-xs text-foreground sm:text-sm">
                         {{ formatNumber(detailOutputTokens) }}
                       </div>
                     </div>
