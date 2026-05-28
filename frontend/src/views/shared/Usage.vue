@@ -246,7 +246,8 @@ const {
   availableModels,
   availableProviders,
   loadStats,
-  loadRecords
+  loadRecords,
+  updateServerClockOffset
 } = useUsageData({ isAdminPage })
 
 // 热力图状态
@@ -445,10 +446,14 @@ const discoveredActiveRequestIds = new Set<string>()
 
 async function loadActiveRequestUpdates(ids?: string[]) {
   if (isAdminPage.value) {
-    return usageApi.getActiveRequests(ids, timeRange.value)
+    const result = await usageApi.getActiveRequests(ids, timeRange.value)
+    updateServerClockOffset(result.server_timing)
+    return result
   }
   const idsParam = ids?.length ? ids.join(',') : undefined
-  return meApi.getActiveRequests(idsParam)
+  const result = await meApi.getActiveRequests(idsParam)
+  updateServerClockOffset(result.server_timing)
+  return result
 }
 
 async function pollActiveRequests() {
