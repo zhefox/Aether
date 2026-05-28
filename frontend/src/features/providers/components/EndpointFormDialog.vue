@@ -147,7 +147,7 @@
                     <Label class="text-xs text-muted-foreground">Base URL</Label>
                     <Input
                       :model-value="getEndpointEditState(endpoint.id)?.url ?? endpoint.base_url"
-                      :placeholder="provider?.website || 'https://api.example.com'"
+                      :placeholder="getEndpointBaseUrlPlaceholder(endpoint.api_format)"
                       :disabled="isFixedProvider"
                       @update:model-value="(v) => updateEndpointField(endpoint.id, 'url', v)"
                     />
@@ -965,7 +965,7 @@
                 <Input
                   v-model="newEndpoint.base_url"
                   size="sm"
-                  :placeholder="provider?.website || 'https://api.example.com'"
+                  :placeholder="newEndpointBaseUrlPlaceholder"
                 />
               </div>
               <div class="space-y-1.5">
@@ -1811,6 +1811,8 @@ const newEndpoint = ref({
 // API 格式列表
 const apiFormats = ref<Array<{ value: string; label: string; default_path: string }>>([])
 
+const fallbackEndpointBaseUrl = 'https://api.example.com'
+
 // 本地端点列表
 const localEndpoints = ref<ProviderEndpoint[]>([])
 
@@ -1886,6 +1888,14 @@ function getEndpointDefaultPath(endpoint: ProviderEndpoint): string {
   return getDefaultPath(endpoint.api_format, getEndpointEditState(endpoint.id)?.url ?? endpoint.base_url)
 }
 
+function getEndpointBaseUrlPlaceholder(apiFormat: string): string {
+  const seedBaseUrl = (props.provider?.website || fallbackEndpointBaseUrl).trim()
+  return getDefaultEndpointBaseUrl({
+    apiFormat,
+    baseUrl: seedBaseUrl,
+  }) || seedBaseUrl
+}
+
 function getNewEndpointBaseUrl(): string {
   const typedBaseUrl = newEndpoint.value.base_url.trim()
   if (typedBaseUrl) return typedBaseUrl
@@ -1894,6 +1904,10 @@ function getNewEndpointBaseUrl(): string {
     baseUrl: props.provider?.website || '',
   })
 }
+
+const newEndpointBaseUrlPlaceholder = computed(() => {
+  return getEndpointBaseUrlPlaceholder(newEndpoint.value.api_format)
+})
 
 function getDisplayedPath(endpoint: ProviderEndpoint): string {
   return getEndpointEditState(endpoint.id)?.path ?? (endpoint.custom_path || '')
