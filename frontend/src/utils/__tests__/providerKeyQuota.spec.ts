@@ -142,6 +142,28 @@ describe('providerKeyQuota', () => {
     }, 'gemini_cli')).toBe('AI Credits 剩余 41.5')
   })
 
+  it('formats ChatGPT Web image quota as remaining count', () => {
+    expect(getQuotaDisplayText({
+      status_snapshot: {
+        quota: {
+          provider_type: 'chatgpt_web',
+          code: 'ok',
+          exhausted: false,
+          windows: [
+            {
+              code: 'image_gen',
+              scope: 'account',
+              remaining_ratio: 0.96,
+              used_value: 1,
+              remaining_value: 24,
+              limit_value: 25,
+            },
+          ],
+        },
+      },
+    }, 'chatgpt_web')).toBe('生图剩余 24/25')
+  })
+
   it('surfaces Windsurf hard account states', () => {
     expect(getQuotaDisplayText({
       status_snapshot: {

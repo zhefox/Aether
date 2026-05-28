@@ -18,6 +18,7 @@ mod passthrough;
 mod plan_builders;
 mod pool_scheduler;
 pub(crate) mod pool_scores;
+mod redaction;
 mod report_context;
 mod route;
 mod runtime_miss;

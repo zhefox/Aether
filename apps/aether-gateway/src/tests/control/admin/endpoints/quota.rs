@@ -1533,8 +1533,7 @@ async fn gateway_refreshes_admin_provider_quota_locally_for_gemini_cli_with_trus
     assert_eq!(
         seen_request.request_body,
         Some(json!({
-            "project": "gemini-cli-project-1",
-            "userAgent": "GeminiCLI/0.1.5 (Windows; AMD64)"
+            "project": "gemini-cli-project-1"
         }))
     );
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);

@@ -1093,10 +1093,58 @@ fn infer_client_family_from_user_agent(user_agent: &str) -> Option<&'static str>
     if normalized.contains("geminicli") || normalized.contains("gemini-cli") {
         return Some("gemini_cli");
     }
+    if normalized.contains("qwencode") {
+        return Some("qwen_code");
+    }
+    if normalized.contains("roo-code") || normalized.contains("roocode") {
+        return Some("roo_code");
+    }
+    if normalized.contains("kilo-code") || normalized.contains("kilocode") {
+        return Some("kilocode");
+    }
+    if normalized.contains("cherrystudio") || normalized.contains("cherry-studio") {
+        return Some("cherrystudio");
+    }
+    if normalized.contains("openui-agent-manager") || normalized.contains("openui") {
+        return Some("openui");
+    }
+    if normalized.contains("cursor") {
+        return Some("cursor");
+    }
+    if normalized.contains("windsurf") {
+        return Some("windsurf");
+    }
+    if normalized.contains("continue") {
+        return Some("continue");
+    }
+    if normalized.contains("cline") {
+        return Some("cline");
+    }
+    if normalized.contains("aider") {
+        return Some("aider");
+    }
+    if normalized.contains("langchain") {
+        return Some("langchain");
+    }
+    if normalized.contains("llamaindex") || normalized.contains("llama-index") {
+        return Some("llamaindex");
+    }
     if normalized.starts_with("openai/js") {
         return Some("openai_js_sdk");
     }
-    None
+    if normalized.starts_with("openai/python") {
+        return Some("openai_python_sdk");
+    }
+    if normalized.starts_with("anthropic/js") || normalized.contains("anthropic-sdk-typescript") {
+        return Some("anthropic_js_sdk");
+    }
+    if normalized.starts_with("anthropic/python") || normalized.contains("anthropic-sdk-python") {
+        return Some("anthropic_python_sdk");
+    }
+    if normalized.contains("/js ") || normalized.contains("/python ") {
+        return Some("sdk");
+    }
+    Some("unknown")
 }
 
 pub fn admin_usage_client_family(item: &StoredRequestUsageAudit) -> Option<&str> {
@@ -1173,6 +1221,12 @@ fn admin_usage_active_request_json(
     value["has_format_conversion"] = json!(item.has_format_conversion);
     if let Some(target_model) = item.target_model.as_ref() {
         value["target_model"] = json!(target_model);
+    }
+    if let Some(reasoning_effort) = item.provider_reasoning_effort() {
+        value["reasoning_effort"] = json!(reasoning_effort);
+    }
+    if let Some(service_tier) = item.provider_service_tier() {
+        value["service_tier"] = json!(service_tier);
     }
     if let Some(image_progress) = image_progress {
         value["image_progress"] = image_progress.clone();
@@ -1287,6 +1341,12 @@ pub fn admin_usage_record_json(
         "request_path_and_query",
         admin_usage_metadata_string(item, "request_path_and_query"),
     );
+    if let Some(reasoning_effort) = item.provider_reasoning_effort() {
+        object.insert("reasoning_effort".to_string(), json!(reasoning_effort));
+    }
+    if let Some(service_tier) = item.provider_service_tier() {
+        object.insert("service_tier".to_string(), json!(service_tier));
+    }
     payload
 }
 
@@ -2604,6 +2664,32 @@ mod tests {
         );
 
         assert_eq!(record["client_family"], "codex");
+    }
+
+    #[test]
+    fn admin_usage_record_includes_provider_reasoning_effort() {
+        let item = StoredRequestUsageAudit {
+            provider_request_body: Some(json!({
+                "reasoning": { "effort": "xhigh" },
+                "service_tier": "priority"
+            })),
+            ..sample_usage("completed", Some(200), None)
+        };
+
+        let record = admin_usage_record_json(
+            &item,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            false,
+            false,
+            None,
+        );
+        let active = admin_usage_active_request_json(&item, None, None, None);
+
+        assert_eq!(record["reasoning_effort"], "xhigh");
+        assert_eq!(active["reasoning_effort"], "xhigh");
+        assert_eq!(record["service_tier"], "priority");
+        assert_eq!(active["service_tier"], "priority");
     }
 
     #[test]

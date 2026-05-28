@@ -21,7 +21,9 @@ use aether_runtime_state::{
 };
 use aether_scheduler_core::PROVIDER_KEY_RPM_WINDOW_SECS;
 
-use super::{AppState, FrontdoorCorsConfig, LocalExecutionRuntimeMissDiagnostic};
+use super::{
+    AppState, FrontdoorCorsConfig, FrontdoorRuntimeGuardConfig, LocalExecutionRuntimeMissDiagnostic,
+};
 
 use super::super::async_task::{
     spawn_video_task_poller, VideoTaskPollerConfig, VideoTaskService, VideoTaskTruthSourceMode,
@@ -67,8 +69,10 @@ const SCHEDULER_AFFECTING_SYSTEM_CONFIG_KEYS: &[&str] = &[
     "provider_priority_mode",
     "scheduling_mode",
 ];
-const AUTH_AFFECTING_SYSTEM_CONFIG_KEYS: &[&str] =
-    &[crate::constants::DEFAULT_USER_GROUP_CONFIG_KEY];
+const AUTH_AFFECTING_SYSTEM_CONFIG_KEYS: &[&str] = &[
+    crate::constants::DEFAULT_USER_GROUP_CONFIG_KEY,
+    crate::constants::ANTIGRAVITY_BEARER_BRIDGE_CONFIG_KEY,
+];
 const FRONTDOOR_RPM_AFFECTING_SYSTEM_CONFIG_KEYS: &[&str] = &["rate_limit_per_minute"];
 
 fn system_config_key_affects_scheduler(key: &str) -> bool {
@@ -227,6 +231,7 @@ impl AppState {
                 VideoTaskTruthSourceMode::PythonSyncReport,
             )),
             video_task_poller: None,
+            frontdoor_runtime_guards: Arc::new(FrontdoorRuntimeGuardConfig::from_env()),
             request_gate: None,
             distributed_request_gate: None,
             client,
@@ -568,12 +573,14 @@ impl AppState {
 
     pub(crate) fn invalidate_provider_routing_caches(&self) {
         self.data.clear_minimal_candidate_selection_cache();
+        self.data.clear_provider_catalog_cache();
         self.clear_provider_transport_snapshot_cache();
         self.invalidate_scheduler_affinity_cache();
     }
 
     pub(crate) fn invalidate_provider_health_routing_caches(&self) {
         self.data.clear_minimal_candidate_selection_cache();
+        self.data.clear_provider_catalog_cache();
         self.clear_provider_transport_snapshot_cache();
     }
 
@@ -624,6 +631,36 @@ impl AppState {
             self.invalidate_provider_routing_caches();
         }
         Ok(summary)
+    }
+
+    pub(crate) async fn export_admin_system_usage_aggregates(
+        &self,
+    ) -> Result<aether_data::repository::system::AdminSystemUsageAggregateSnapshot, GatewayError>
+    {
+        self.data
+            .export_admin_system_usage_aggregates()
+            .await
+            .map_err(|err| GatewayError::Internal(err.to_string()))
+    }
+
+    pub(crate) async fn import_admin_system_usage_aggregates(
+        &self,
+        snapshot: &aether_data::repository::system::AdminSystemUsageAggregateSnapshot,
+        user_id_map: &std::collections::BTreeMap<String, String>,
+        api_key_id_map: &std::collections::BTreeMap<String, String>,
+        mode: aether_data::repository::system::AdminSystemUsageAggregateImportMode,
+    ) -> Result<aether_data::repository::system::AdminSystemUsageAggregateImportSummary, GatewayError>
+    {
+        self.data
+            .import_admin_system_usage_aggregates(snapshot, user_id_map, api_key_id_map, mode)
+            .await
+            .map_err(|err| match err {
+                aether_data::DataLayerError::InvalidInput(detail) => GatewayError::Client {
+                    status: http::StatusCode::BAD_REQUEST,
+                    message: detail,
+                },
+                other => GatewayError::Internal(other.to_string()),
+            })
     }
 
     pub(crate) async fn run_admin_system_cleanup_once(
@@ -1232,6 +1269,10 @@ impl AppState {
         supervise_worker(
             crate::task_runtime::TASK_KEY_VIDEO_TASK_POLLER,
             spawn_video_task_poller(self.clone()),
+        );
+        supervise_worker(
+            crate::backup::worker::S3_BACKUP_WORKER_TASK_KEY,
+            crate::backup::worker::spawn_s3_backup_worker(self.clone()),
         );
 
         supervisor

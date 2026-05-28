@@ -16,9 +16,13 @@ use crate::ai_serving::planner::gemini_cli::{
     build_gemini_cli_v1internal_provider_request, GeminiCliV1InternalRequestError,
     GeminiCliV1InternalRequestInput,
 };
+use crate::ai_serving::planner::redaction::{
+    request_identity_response_encoding_when_redacted, resolve_provider_chat_pii_redaction,
+};
 use crate::ai_serving::planner::spec_metadata::local_standard_spec_metadata;
 use crate::ai_serving::planner::standard::{
-    apply_codex_openai_responses_special_headers, request_body_build_failure_extra_data,
+    apply_codex_openai_responses_special_headers, apply_deepseek_tool_call_thinking_compat,
+    is_deepseek_provider, request_body_build_failure_extra_data,
 };
 use crate::ai_serving::transport::kiro::{
     build_kiro_provider_headers, build_kiro_provider_request_body,
@@ -41,13 +45,15 @@ use crate::ai_serving::{
     build_openai_image_request_body_from_gemini_image_request, gemini_request_is_image_generation,
     CandidateFailureDiagnostic, GatewayProviderTransportSnapshot, LocalResolvedOAuthRequestAuth,
 };
-use crate::AppState;
+use crate::{AppState, GatewayError};
 
 use super::payload::{
     mark_skipped_local_standard_candidate, mark_skipped_local_standard_candidate_with_extra_data,
     mark_skipped_local_standard_candidate_with_failure_diagnostic,
 };
 use super::{LocalStandardCandidateAttempt, LocalStandardDecisionInput, LocalStandardSpec};
+
+const OMITTED_THINKING_TEXT: &str = "Previous thinking omitted.";
 
 pub(crate) struct LocalStandardCandidatePayloadParts {
     pub(super) auth_header: String,
@@ -61,6 +67,7 @@ pub(crate) struct LocalStandardCandidatePayloadParts {
     pub(super) envelope_name: Option<&'static str>,
     pub(super) transport: Arc<GatewayProviderTransportSnapshot>,
     pub(super) transport_profile: Option<ResolvedTransportProfile>,
+    pub(super) request_redacted: bool,
 }
 
 fn is_grok_text_provider_api_format(provider_api_format: &str) -> bool {
@@ -119,8 +126,6 @@ fn sanitize_claude_thinking_block(block: Value) -> (Option<Value>, bool) {
 }
 
 fn sanitize_claude_message_content_for_non_native_thinking(content: &mut Value) -> bool {
-    const OMITTED_THINKING_TEXT: &str = "Previous thinking omitted.";
-
     if content.is_object() {
         let original = std::mem::take(content);
         let (sanitized, changed) = sanitize_claude_thinking_block(original);
@@ -180,12 +185,94 @@ fn sanitize_claude_request_thinking_signatures_for_non_native(body_json: &mut Va
         .unwrap_or(false)
 }
 
+fn remove_claude_redacted_thinking_block(block: Value) -> (Option<Value>, bool) {
+    let Some(object) = block.as_object() else {
+        return (Some(block), false);
+    };
+    let block_type = object
+        .get("type")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .unwrap_or_default();
+    if block_type == "redacted_thinking" {
+        return (None, true);
+    }
+    (Some(block), false)
+}
+
+fn sanitize_claude_message_content_for_deepseek_thinking(content: &mut Value) -> bool {
+    if content.is_object() {
+        let original = std::mem::take(content);
+        let (sanitized, changed) = remove_claude_redacted_thinking_block(original);
+        if changed {
+            *content = sanitized.unwrap_or_else(|| {
+                serde_json::json!({
+                    "type": "text",
+                    "text": OMITTED_THINKING_TEXT,
+                })
+            });
+        }
+        return changed;
+    }
+
+    let Some(blocks) = content.as_array_mut() else {
+        return false;
+    };
+    let original_blocks = std::mem::take(blocks);
+    let mut changed = false;
+    let mut sanitized_blocks = Vec::with_capacity(original_blocks.len());
+    for block in original_blocks {
+        let (sanitized, block_changed) = remove_claude_redacted_thinking_block(block);
+        changed |= block_changed;
+        if let Some(sanitized) = sanitized {
+            sanitized_blocks.push(sanitized);
+        }
+    }
+    if changed && sanitized_blocks.is_empty() {
+        sanitized_blocks.push(serde_json::json!({
+            "type": "text",
+            "text": OMITTED_THINKING_TEXT,
+        }));
+    }
+    *blocks = sanitized_blocks;
+    changed
+}
+
+fn sanitize_claude_request_redacted_thinking_for_deepseek(body_json: &mut Value) -> bool {
+    body_json
+        .get_mut("messages")
+        .and_then(Value::as_array_mut)
+        .map(|messages| {
+            messages.iter_mut().fold(false, |changed, message| {
+                let is_assistant = message
+                    .get("role")
+                    .and_then(Value::as_str)
+                    .is_some_and(|role| role.trim().eq_ignore_ascii_case("assistant"));
+                if !is_assistant {
+                    return changed;
+                }
+                let content_changed = message
+                    .get_mut("content")
+                    .is_some_and(sanitize_claude_message_content_for_deepseek_thinking);
+                changed || content_changed
+            })
+        })
+        .unwrap_or(false)
+}
+
 fn apply_non_native_claude_thinking_signature_compat(
     provider_request_body: &mut Value,
     provider_api_format: &str,
     transport: &GatewayProviderTransportSnapshot,
 ) {
     if crate::ai_serving::normalize_api_format_alias(provider_api_format) != "claude:messages" {
+        return;
+    }
+    if is_deepseek_provider(
+        transport.provider.provider_type.as_str(),
+        transport.endpoint.base_url.as_str(),
+    ) {
+        let _ = sanitize_claude_request_redacted_thinking_for_deepseek(provider_request_body);
         return;
     }
     if provider_preserves_claude_thinking_signatures(
@@ -206,7 +293,7 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
     input: &LocalStandardDecisionInput,
     attempt: &LocalStandardCandidateAttempt,
     spec: LocalStandardSpec,
-) -> Option<LocalStandardCandidatePayloadParts> {
+) -> Result<Option<LocalStandardCandidatePayloadParts>, GatewayError> {
     let spec_metadata = local_standard_spec_metadata(spec);
     let planner_state = crate::ai_serving::PlannerAppState::new(state);
     let candidate = &attempt.eligible.candidate;
@@ -223,10 +310,12 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
         && provider_api_format == "openai:image"
         && gemini_request_is_image_generation(body_json)
     {
-        return resolve_local_gemini_image_to_openai_image_candidate_payload_parts(
-            state, parts, trace_id, body_json, input, attempt,
-        )
-        .await;
+        return Ok(
+            resolve_local_gemini_image_to_openai_image_candidate_payload_parts(
+                state, parts, trace_id, body_json, input, attempt,
+            )
+            .await,
+        );
     }
     let is_kiro_claude_cli = is_kiro_claude_messages_transport(transport, provider_api_format);
     if is_grok && is_grok_text_provider_api_format(provider_api_format) {
@@ -255,9 +344,20 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
                     skip_reason,
                 )
                 .await;
-                return None;
+                return Ok(None);
             }
         };
+
+        let redaction = resolve_provider_chat_pii_redaction(
+            state,
+            parts,
+            body_json,
+            &input.auth_context,
+            spec_metadata.api_format,
+            &attempt.candidate_id,
+        )
+        .await?;
+        let body_json = redaction.body_json.as_ref();
 
         let mut provider_request_body = body_json.clone();
         if let Some(object) = provider_request_body.as_object_mut() {
@@ -284,7 +384,7 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
         );
 
         let upstream_url = build_grok_upstream_url(transport, GROK_CHAT_PATH);
-        let Some(provider_request_headers) = build_grok_browser_headers(GrokHeaderInput {
+        let Some(mut provider_request_headers) = build_grok_browser_headers(GrokHeaderInput {
             transport,
             transport_profile: transport_profile.as_ref(),
             request_headers: Some(effective_headers),
@@ -309,10 +409,14 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
                 ),
             )
             .await;
-            return None;
+            return Ok(None);
         };
+        request_identity_response_encoding_when_redacted(
+            &mut provider_request_headers,
+            redaction.redacted,
+        );
 
-        return Some(LocalStandardCandidatePayloadParts {
+        return Ok(Some(LocalStandardCandidatePayloadParts {
             auth_header: prepared_candidate.auth_header,
             auth_value: prepared_candidate.auth_value,
             mapped_model: prepared_candidate.mapped_model,
@@ -324,7 +428,8 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
             envelope_name: None,
             transport: Arc::clone(transport),
             transport_profile,
-        });
+            request_redacted: redaction.redacted,
+        }));
     }
 
     if !crate::ai_serving::request_pair_allowed_for_transport(
@@ -332,7 +437,7 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
         spec_metadata.api_format,
         provider_api_format,
     ) {
-        return None;
+        return Ok(None);
     }
 
     let is_windsurf_cascade =
@@ -357,7 +462,7 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
             skip_reason,
         )
         .await;
-        return None;
+        return Ok(None);
     }
 
     let oauth_context = OauthPreparationContext {
@@ -385,7 +490,7 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
                     "transport_auth_unavailable",
                 )
                 .await;
-                return None;
+                return Ok(None);
             }
         }
     } else {
@@ -410,7 +515,7 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
                     skip_reason,
                 )
                 .await;
-                return None;
+                return Ok(None);
             }
         }
     } else {
@@ -435,7 +540,7 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
                     skip_reason,
                 )
                 .await;
-                return None;
+                return Ok(None);
             }
         }
     };
@@ -456,6 +561,16 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
             Some(&input.requested_model),
         )
         .await;
+    let redaction = resolve_provider_chat_pii_redaction(
+        state,
+        parts,
+        body_json,
+        &input.auth_context,
+        spec_metadata.api_format,
+        &attempt.candidate_id,
+    )
+    .await?;
+    let body_json = redaction.body_json.as_ref();
     let mut provider_request_body =
         match crate::ai_serving::planner::standard::build_standard_request_body_with_model_directives_and_request_headers(
             body_json,
@@ -491,7 +606,7 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
                     ),
                 )
                 .await;
-                return None;
+                return Ok(None);
             }
         };
     enforce_provider_body_stream_policy(
@@ -521,12 +636,19 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
             ),
         )
         .await;
-        return None;
+        return Ok(None);
     }
     apply_non_native_claude_thinking_signature_compat(
         &mut provider_request_body,
         provider_api_format,
         transport,
+    );
+    apply_deepseek_tool_call_thinking_compat(
+        &mut provider_request_body,
+        transport.provider.provider_type.as_str(),
+        transport.endpoint.base_url.as_str(),
+        provider_api_format,
+        Some(body_json),
     );
     if let Some(mapping) =
         crate::system_features::reasoning_model_directive_mapping_for_api_format_and_model(
@@ -569,17 +691,24 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
                 ),
             )
             .await;
-            return None;
+            return Ok(None);
         }
         apply_non_native_claude_thinking_signature_compat(
             &mut provider_request_body,
             provider_api_format,
             transport,
         );
+        apply_deepseek_tool_call_thinking_compat(
+            &mut provider_request_body,
+            transport.provider.provider_type.as_str(),
+            transport.endpoint.base_url.as_str(),
+            provider_api_format,
+            Some(body_json),
+        );
     }
 
     if let Some(kiro_auth) = kiro_auth.as_ref() {
-        return build_kiro_cross_format_payload_parts(
+        return Ok(build_kiro_cross_format_payload_parts(
             state,
             parts,
             trace_id,
@@ -594,11 +723,12 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
             provider_request_body,
             upstream_is_stream,
             kiro_auth,
+            redaction.redacted,
         )
-        .await;
+        .await);
     }
     if is_windsurf_cascade {
-        return build_windsurf_cross_format_payload_parts(
+        return Ok(build_windsurf_cross_format_payload_parts(
             state,
             parts,
             trace_id,
@@ -612,8 +742,9 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
             prepared_candidate.auth_value,
             provider_request_body,
             upstream_is_stream,
+            redaction.redacted,
         )
-        .await;
+        .await);
     }
 
     let normalized_provider_api_format =
@@ -621,7 +752,7 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
     if normalized_provider_api_format == "gemini:generate_content"
         && is_gemini_cli_provider_transport(transport)
     {
-        return build_gemini_cli_cross_format_payload_parts(
+        return Ok(build_gemini_cli_cross_format_payload_parts(
             state,
             parts,
             trace_id,
@@ -636,8 +767,9 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
             prepared_candidate.auth_value,
             provider_request_body,
             upstream_is_stream,
+            redaction.redacted,
         )
-        .await;
+        .await);
     }
 
     let upstream_url = match crate::ai_serving::planner::standard::build_standard_upstream_url(
@@ -665,7 +797,7 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
                 ),
             )
             .await;
-            return None;
+            return Ok(None);
         }
     };
     let Some(resolved_headers) =
@@ -698,7 +830,7 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
             ),
         )
         .await;
-        return None;
+        return Ok(None);
     };
     let mut provider_request_headers = resolved_headers.headers;
     apply_codex_openai_responses_special_headers(
@@ -710,8 +842,12 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
         Some(trace_id),
         transport.key.decrypted_auth_config.as_deref(),
     );
+    request_identity_response_encoding_when_redacted(
+        &mut provider_request_headers,
+        redaction.redacted,
+    );
 
-    Some(LocalStandardCandidatePayloadParts {
+    Ok(Some(LocalStandardCandidatePayloadParts {
         auth_header: resolved_headers.auth_header,
         auth_value: resolved_headers.auth_value,
         mapped_model: prepared_candidate.mapped_model,
@@ -723,7 +859,8 @@ pub(crate) async fn resolve_local_standard_candidate_payload_parts(
         envelope_name: None,
         transport: Arc::clone(transport),
         transport_profile: None,
-    })
+        request_redacted: redaction.redacted,
+    }))
 }
 
 fn apply_transport_request_body_semantics(
@@ -754,6 +891,7 @@ async fn build_gemini_cli_cross_format_payload_parts(
     auth_value: String,
     gemini_request_body: Value,
     upstream_is_stream: bool,
+    request_redacted: bool,
 ) -> Option<LocalStandardCandidatePayloadParts> {
     let candidate = &attempt.eligible.candidate;
     let effective_headers = input.effective_headers(&parts.headers);
@@ -854,6 +992,10 @@ async fn build_gemini_cli_cross_format_payload_parts(
         Some(trace_id),
         resolved.transport.key.decrypted_auth_config.as_deref(),
     );
+    request_identity_response_encoding_when_redacted(
+        &mut provider_request_headers,
+        request_redacted,
+    );
 
     Some(LocalStandardCandidatePayloadParts {
         auth_header: resolved.headers.auth_header,
@@ -867,6 +1009,7 @@ async fn build_gemini_cli_cross_format_payload_parts(
         envelope_name: Some(GEMINI_CLI_V1INTERNAL_ENVELOPE_NAME),
         transport: resolved.transport,
         transport_profile: None,
+        request_redacted,
     })
 }
 
@@ -885,6 +1028,7 @@ async fn build_windsurf_cross_format_payload_parts(
     auth_value: String,
     openai_chat_request_body: Value,
     upstream_is_stream: bool,
+    request_redacted: bool,
 ) -> Option<LocalStandardCandidatePayloadParts> {
     let candidate = &attempt.eligible.candidate;
     let effective_headers = input.effective_headers(&parts.headers);
@@ -940,7 +1084,7 @@ async fn build_windsurf_cross_format_payload_parts(
             return None;
         }
     };
-    let provider_request_headers = match build_windsurf_cascade_headers(
+    let mut provider_request_headers = match build_windsurf_cascade_headers(
         effective_headers,
         &provider_request_body,
         original_body_json,
@@ -969,6 +1113,10 @@ async fn build_windsurf_cross_format_payload_parts(
             return None;
         }
     };
+    request_identity_response_encoding_when_redacted(
+        &mut provider_request_headers,
+        request_redacted,
+    );
 
     Some(LocalStandardCandidatePayloadParts {
         auth_header,
@@ -982,6 +1130,7 @@ async fn build_windsurf_cross_format_payload_parts(
         envelope_name: Some(WINDSURF_ENVELOPE_NAME),
         transport: Arc::clone(transport),
         transport_profile: None,
+        request_redacted,
     })
 }
 
@@ -1120,6 +1269,7 @@ async fn resolve_local_gemini_image_to_openai_image_candidate_payload_parts(
         envelope_name: None,
         transport: Arc::clone(transport),
         transport_profile: None,
+        request_redacted: false,
     })
 }
 
@@ -1139,6 +1289,7 @@ async fn build_kiro_cross_format_payload_parts(
     claude_request_body: Value,
     upstream_is_stream: bool,
     kiro_auth: &KiroRequestAuth,
+    request_redacted: bool,
 ) -> Option<LocalStandardCandidatePayloadParts> {
     let candidate = &attempt.eligible.candidate;
     let effective_headers = input.effective_headers(&parts.headers);
@@ -1197,7 +1348,7 @@ async fn build_kiro_cross_format_payload_parts(
             return None;
         }
     };
-    let provider_request_headers = match build_kiro_provider_headers(KiroProviderHeadersInput {
+    let mut provider_request_headers = match build_kiro_provider_headers(KiroProviderHeadersInput {
         headers: effective_headers,
         provider_request_body: &provider_request_body,
         original_request_body: original_body_json,
@@ -1227,6 +1378,10 @@ async fn build_kiro_cross_format_payload_parts(
             return None;
         }
     };
+    request_identity_response_encoding_when_redacted(
+        &mut provider_request_headers,
+        request_redacted,
+    );
 
     Some(LocalStandardCandidatePayloadParts {
         auth_header,
@@ -1240,6 +1395,7 @@ async fn build_kiro_cross_format_payload_parts(
         envelope_name: Some(KIRO_ENVELOPE_NAME),
         transport: Arc::clone(transport),
         transport_profile: None,
+        request_redacted,
     })
 }
 
@@ -1247,6 +1403,7 @@ async fn build_kiro_cross_format_payload_parts(
 mod tests {
     use super::{
         provider_preserves_claude_thinking_signatures,
+        sanitize_claude_request_redacted_thinking_for_deepseek,
         sanitize_claude_request_thinking_signatures_for_non_native,
     };
     use serde_json::json;
@@ -1311,6 +1468,46 @@ mod tests {
     }
 
     #[test]
+    fn deepseek_sanitizer_preserves_plain_thinking_but_removes_redacted() {
+        let mut body = json!({
+            "model": "claude-opus-4-1",
+            "messages": [{
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "thinking",
+                        "thinking": "I should keep this short.",
+                        "signature": "sig_123"
+                    },
+                    {
+                        "type": "redacted_thinking",
+                        "data": "opaque"
+                    },
+                    {
+                        "type": "text",
+                        "text": "Done."
+                    }
+                ]
+            }]
+        });
+
+        assert!(sanitize_claude_request_redacted_thinking_for_deepseek(
+            &mut body
+        ));
+        assert_eq!(body["messages"][0]["content"].as_array().unwrap().len(), 2);
+        assert_eq!(body["messages"][0]["content"][0]["type"], json!("thinking"));
+        assert_eq!(
+            body["messages"][0]["content"][0]["thinking"],
+            json!("I should keep this short.")
+        );
+        assert_eq!(
+            body["messages"][0]["content"][0]["signature"],
+            json!("sig_123")
+        );
+        assert_eq!(body["messages"][0]["content"][1]["text"], json!("Done."));
+    }
+
+    #[test]
     fn official_claude_providers_preserve_thinking_signatures() {
         assert!(provider_preserves_claude_thinking_signatures(
             "anthropic",
@@ -1327,6 +1524,14 @@ mod tests {
         assert!(provider_preserves_claude_thinking_signatures(
             "amazon_bedrock",
             "https://relay.example.com"
+        ));
+        assert!(!provider_preserves_claude_thinking_signatures(
+            "deepseek",
+            "https://relay.example.com"
+        ));
+        assert!(!provider_preserves_claude_thinking_signatures(
+            "custom",
+            "https://api.deepseek.com"
         ));
         assert!(!provider_preserves_claude_thinking_signatures(
             "openai",

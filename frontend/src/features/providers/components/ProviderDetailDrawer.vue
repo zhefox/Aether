@@ -1122,7 +1122,7 @@
                       </div>
                       <div>
                         <div class="flex items-center justify-between text-[10px] mb-0.5">
-                          <span class="text-muted-foreground">使用额度</span>
+                          <span class="text-muted-foreground">剩余额度</span>
                           <span :class="getQuotaRemainingClass(getChatGPTWebQuotaUsedPercent(key))">
                             {{ getChatGPTWebQuotaRemainingPercent(key).toFixed(1) }}%
                           </span>
@@ -1136,7 +1136,7 @@
                         </div>
                         <div class="flex items-center justify-between text-[9px] text-muted-foreground/70 mt-0.5">
                           <span>
-                            {{ formatChatGPTWebUsage(getChatGPTWebQuotaDisplay(key)?.image_quota_used) }} /
+                            {{ formatChatGPTWebUsage(getChatGPTWebQuotaDisplay(key)?.image_quota_remaining) }} /
                             {{ formatChatGPTWebUsage(getChatGPTWebQuotaDisplay(key)?.image_quota_total) }}
                           </span>
                           <span v-if="getChatGPTWebQuotaDisplay(key)?.image_quota_reset_at">
@@ -1389,7 +1389,7 @@
     :open="batchAssignDialogOpen"
     :provider-id="provider.id"
     :provider-name="provider.name"
-    @update:open="batchAssignDialogOpen = $event"
+    @update:open="handleBatchAssignDialogOpenUpdate"
     @changed="handleBatchAssignChanged"
   />
 
@@ -1506,6 +1506,7 @@ import {
 } from '../utils/quotaAutoRefreshCooldown'
 import { getOAuthOrgBadge } from '@/utils/oauthIdentity'
 import { getOAuthRefreshFeedback } from '@/utils/oauthRefreshFeedback'
+import { formatCompactNumber } from '@/utils/format'
 import {
   canEditOAuthCredential,
   canExportOAuthCredential,
@@ -2700,13 +2701,10 @@ const formatKiroUpdatedAt = formatUpdatedAt
 // 格式化 Kiro 使用量（带单位）
 function formatKiroUsage(value: number | undefined): string {
   if (value === undefined || value === null) return '-'
-  if (value >= 1000000) {
-    return `${(value / 1000000).toFixed(1)}M`
-  }
-  if (value >= 1000) {
-    return `${(value / 1000).toFixed(1)}K`
-  }
-  return value.toFixed(1)
+  const normalized = Number(value)
+  if (!Number.isFinite(normalized)) return '-'
+  if (normalized >= 1000) return formatCompactNumber(normalized, { fractionDigits: 1 })
+  return normalized.toFixed(1)
 }
 
 // 格式化 Kiro 重置时间
@@ -3184,6 +3182,10 @@ function handleEditModel(model: Model) {
 // 处理打开批量关联对话框
 function handleBatchAssign() {
   batchAssignDialogOpen.value = true
+}
+
+function handleBatchAssignDialogOpenUpdate(value: boolean) {
+  batchAssignDialogOpen.value = value
 }
 
 // 处理批量关联完成

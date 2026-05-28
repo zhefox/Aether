@@ -7,8 +7,8 @@ use aether_crypto::{
 use aether_data::repository::provider_catalog::InMemoryProviderCatalogReadRepository;
 use aether_data_contracts::repository::provider_catalog::{
     ProviderCatalogKeyListQuery, ProviderCatalogReadRepository, StoredProviderCatalogEndpoint,
-    StoredProviderCatalogKey, StoredProviderCatalogKeyPage, StoredProviderCatalogKeyStats,
-    StoredProviderCatalogProvider,
+    StoredProviderCatalogKey, StoredProviderCatalogKeyMaintenanceSummary,
+    StoredProviderCatalogKeyPage, StoredProviderCatalogKeyStats, StoredProviderCatalogProvider,
 };
 use aether_data_contracts::DataLayerError;
 use axum::body::Body;
@@ -105,6 +105,15 @@ impl ProviderCatalogReadRepository for SummaryNullingProviderCatalogReadReposito
             key.circuit_breaker_by_format = None;
         }
         Ok(keys)
+    }
+
+    async fn list_key_maintenance_summaries_by_provider_ids(
+        &self,
+        provider_ids: &[String],
+    ) -> Result<Vec<StoredProviderCatalogKeyMaintenanceSummary>, DataLayerError> {
+        self.inner
+            .list_key_maintenance_summaries_by_provider_ids(provider_ids)
+            .await
     }
 
     async fn list_keys_page(
@@ -232,8 +241,8 @@ async fn gateway_provider_keys_expose_circuit_breaker_and_recover_clears_it() {
             "open": true,
             "open_at": "2026-03-26T12:00:00+00:00",
             "reason": "consecutive_failures_8",
-            "next_probe_at": "2026-03-26T12:01:00+00:00",
-            "next_probe_at_unix_secs": 1774526460u64,
+            "next_probe_at": "2099-03-26T12:01:00+00:00",
+            "next_probe_at_unix_secs": 4078209660u64,
             "probe_interval_minutes": 1,
             "max_probe_interval_minutes": 32,
             "half_open_until": null,

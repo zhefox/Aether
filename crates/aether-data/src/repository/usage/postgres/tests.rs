@@ -308,7 +308,9 @@ fn usage_sql_rebuild_matches_online_provider_key_usage_semantics() {
     assert!(super::REBUILD_PROVIDER_API_KEY_USAGE_STATS_SQL
         .contains("AND BTRIM(provider_api_key_id) <> ''"));
     assert!(super::REBUILD_PROVIDER_API_KEY_USAGE_STATS_SQL
-        .contains("AND status NOT IN ('pending', 'streaming')"));
+        .contains("WHEN status NOT IN ('pending', 'streaming')"));
+    assert!(super::REBUILD_PROVIDER_API_KEY_USAGE_STATS_SQL
+        .contains("WHEN status IN ('pending', 'streaming') THEN 0"));
 }
 
 #[test]
@@ -437,6 +439,30 @@ fn usage_sql_summarize_usage_daily_heatmap_supports_daily_aggregates() {
 }
 
 #[test]
+fn usage_sql_daily_cutoff_falls_back_to_imported_stats_daily() {
+    let source = include_str!("mod.rs");
+    assert!(source.contains("FROM stats_summary"));
+    assert!(source.contains("SELECT MAX(date) AS latest_date"));
+    assert!(source.contains("FROM stats_daily"));
+    assert!(source.contains("FROM stats_user_daily"));
+    assert!(source.contains("FROM stats_daily_api_key"));
+    assert!(source.contains("value + chrono::Duration::days(1)"));
+}
+
+#[test]
+fn usage_sql_dashboard_daily_breakdown_falls_back_to_daily_totals() {
+    let source = include_str!("mod.rs");
+    assert!(source.contains("list_dashboard_daily_breakdown_aggregate_segments"));
+    assert!(source.contains("list_dashboard_daily_breakdown_from_daily_totals"));
+    assert!(source.contains("'aggregate'::TEXT AS model"));
+    assert!(source.contains("FROM stats_daily"));
+    assert!(source.contains("FROM stats_user_daily"));
+    assert!(source.contains("detailed_dates.contains(&item.date)"));
+    assert!(source.contains("query.tz_offset_minutes != 0"));
+    assert!(source.contains("aggregate_dates.insert(item.date.clone())"));
+}
+
+#[test]
 fn usage_sql_summarize_usage_leaderboard_supports_daily_aggregates() {
     let source = include_str!("mod.rs");
     assert!(source.contains("summarize_usage_leaderboard_from_daily_aggregates"));
@@ -501,10 +527,41 @@ fn usage_sql_summarize_total_tokens_by_api_key_ids_supports_daily_aggregates() {
 }
 
 #[test]
+fn dashboard_aggregate_schema_mismatch_detector_matches_legacy_schema_failures() {
+    assert!(super::dashboard_aggregate_schema_mismatch_message(
+        "postgres error: error occurred while decoding column \"cutoff_date\": \
+         mismatched types; Rust type `chrono::DateTime<Utc>` (as SQL type `TIMESTAMPTZ`) \
+         is not compatible with SQL type `INT8`"
+    ));
+    assert!(super::dashboard_aggregate_schema_mismatch_message(
+        "postgres error: db error: ERROR: relation \"stats_daily_model_provider\" does not exist"
+    ));
+    assert!(super::dashboard_aggregate_schema_mismatch_message(
+        "postgres error: db error: ERROR: column \"effective_input_tokens\" does not exist"
+    ));
+    assert!(!super::dashboard_aggregate_schema_mismatch_message(
+        "postgres error: db error: ERROR: permission denied for relation stats_daily"
+    ));
+}
+
+#[test]
+fn dashboard_aggregate_reads_fallback_to_raw_on_schema_mismatch() {
+    let source = include_str!("mod.rs");
+    assert!(source.contains("dashboard_should_fallback_to_raw_on_aggregate_error"));
+    assert!(
+        source.contains("Err(err) if dashboard_should_fallback_to_raw_on_aggregate_error(&err)")
+    );
+    assert!(source.contains("return self.list_dashboard_daily_breakdown_raw(query).await;"));
+}
+
+#[test]
 fn usage_sql_summarize_usage_totals_by_user_ids_supports_user_summary_aggregates() {
     let source = include_str!("mod.rs");
     assert!(source.contains("FROM stats_user_summary"));
     assert!(source.contains("all_time_input_tokens"));
+    assert!(source.contains("FROM stats_user_daily"));
+    assert!(source.contains("date < $2"));
+    assert!(source.contains("summary_user_ids.contains(&user_id)"));
 }
 
 #[test]
@@ -650,6 +707,8 @@ fn usage_sql_uses_json_null_placeholders_for_usage_payload_columns() {
         super::LIST_RECENT_USAGE_AUDITS_PREFIX,
     ] {
         assert!(sql.contains("jsonb_strip_nulls(jsonb_build_object("));
+        assert!(sql.contains("jsonb_typeof(\"usage\".provider_request_body::jsonb)"));
+        assert!(!sql.contains("jsonb_typeof(\"usage\".provider_request_body)"));
         assert!(sql.contains("'client_ip'"));
         assert!(sql.contains("request_metadata->>'client_ip'"));
         assert!(sql.contains("'user_agent'"));

@@ -7,6 +7,9 @@ use serde_json::Value;
 use crate::ai_serving::planner::common::{
     enforce_provider_body_stream_policy, request_requires_body_stream_field,
 };
+use crate::ai_serving::planner::redaction::{
+    request_identity_response_encoding_when_redacted, resolve_provider_chat_pii_redaction,
+};
 use crate::ai_serving::transport::antigravity::{
     build_antigravity_safe_v1internal_request, build_antigravity_static_identity_headers,
     classify_local_antigravity_request_support, AntigravityEnvelopeRequestType,
@@ -16,11 +19,10 @@ use crate::ai_serving::transport::gemini_cli::resolve_gemini_cli_project_id;
 use crate::ai_serving::transport::{
     build_gemini_cli_v1internal_request, build_grok_browser_headers, build_grok_upstream_url,
     build_same_format_provider_headers, GeminiCliRequestEnvelopeSupport, GrokHeaderInput,
-    SameFormatProviderHeadersInput, GEMINI_CLI_USER_AGENT, GEMINI_CLI_V1INTERNAL_ENVELOPE_NAME,
-    GROK_CHAT_PATH,
+    SameFormatProviderHeadersInput, GEMINI_CLI_USER_AGENT, GROK_CHAT_PATH,
 };
 use crate::ai_serving::{CandidateFailureDiagnostic, GatewayProviderTransportSnapshot};
-use crate::AppState;
+use crate::{AppState, GatewayError};
 
 mod policy;
 mod prepare;
@@ -103,6 +105,7 @@ pub(crate) struct LocalSameFormatProviderCandidatePayloadParts {
     pub(super) provider_request_headers: BTreeMap<String, String>,
     pub(super) provider_request_body: Value,
     pub(super) transport_profile: Option<ResolvedTransportProfile>,
+    pub(super) request_redacted: bool,
 }
 
 pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
@@ -113,9 +116,9 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
     input: &LocalSameFormatProviderDecisionInput,
     attempt: &LocalSameFormatProviderCandidateAttempt,
     spec: LocalSameFormatProviderSpec,
-) -> Option<LocalSameFormatProviderCandidatePayloadParts> {
+) -> Result<Option<LocalSameFormatProviderCandidatePayloadParts>, GatewayError> {
     let candidate = &attempt.eligible.candidate;
-    let prepared = prepare_local_same_format_provider_candidate(
+    let Some(prepared) = prepare_local_same_format_provider_candidate(
         state,
         trace_id,
         input,
@@ -124,7 +127,10 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
         &attempt.candidate_id,
         spec,
     )
-    .await?;
+    .await
+    else {
+        return Ok(None);
+    };
     let enable_model_directives =
         crate::system_features::reasoning_model_directive_enabled_for_api_format_and_model(
             state,
@@ -133,6 +139,16 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
         )
         .await;
     let effective_headers = input.effective_headers(&parts.headers);
+    let redaction = resolve_provider_chat_pii_redaction(
+        state,
+        parts,
+        body_json,
+        &input.auth_context,
+        spec.api_format,
+        &attempt.candidate_id,
+    )
+    .await?;
+    let body_json = redaction.body_json.as_ref();
     let mut transport = Arc::clone(&prepared.transport);
 
     let Some(mut base_provider_request_body) =
@@ -170,7 +186,7 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
             ),
         )
         .await;
-        return None;
+        return Ok(None);
     };
     if let Some(mapping) =
         crate::system_features::reasoning_model_directive_mapping_for_api_format_and_model(
@@ -216,7 +232,7 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
                     "transport_unsupported",
                 )
                 .await;
-                return None;
+                return Ok(None);
             }
         }
     } else {
@@ -246,7 +262,7 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
                             "transport_auth_unavailable",
                         )
                         .await;
-                        return None;
+                        return Ok(None);
                     }
                 }
             }
@@ -280,7 +296,7 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
                     ),
                 )
                 .await;
-                return None;
+                return Ok(None);
             }
         }
     } else if let Some(project_id) = gemini_cli_project_id.as_deref() {
@@ -308,7 +324,7 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
                     ),
                 )
                 .await;
-                return None;
+                return Ok(None);
             }
         }
     } else {
@@ -352,7 +368,7 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
             ),
         )
         .await;
-        return None;
+        return Ok(None);
     };
 
     let mut extra_headers = antigravity_auth
@@ -362,7 +378,7 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
     if prepared.behavior.is_gemini_cli {
         extra_headers.insert("user-agent".to_string(), GEMINI_CLI_USER_AGENT.to_string());
     }
-    let Some(provider_request_headers) = (if is_grok {
+    let Some(mut provider_request_headers) = (if is_grok {
         build_grok_browser_headers(GrokHeaderInput {
             transport: &transport,
             transport_profile: transport_profile.as_ref(),
@@ -406,10 +422,14 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
             ),
         )
         .await;
-        return None;
+        return Ok(None);
     };
+    request_identity_response_encoding_when_redacted(
+        &mut provider_request_headers,
+        redaction.redacted,
+    );
 
-    Some(LocalSameFormatProviderCandidatePayloadParts {
+    Ok(Some(LocalSameFormatProviderCandidatePayloadParts {
         transport,
         is_antigravity: prepared.is_antigravity,
         is_gemini_cli: prepared.behavior.is_gemini_cli,
@@ -424,5 +444,6 @@ pub(crate) async fn resolve_local_same_format_provider_candidate_payload_parts(
         provider_request_headers,
         provider_request_body,
         transport_profile,
-    })
+        request_redacted: redaction.redacted,
+    }))
 }

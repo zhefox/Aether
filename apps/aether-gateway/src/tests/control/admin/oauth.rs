@@ -225,7 +225,7 @@ fn windsurf_register_user_execution_result(request_id: &str) -> serde_json::Valu
         },
         "body": {
             "json_body": {
-                "apiKey": "devin-session-token$registered",
+                "sessionToken": "devin-session-token$registered",
                 "name": "Windsurf User",
                 "apiServerUrl": "https://server.codeium.com"
             }
@@ -431,7 +431,7 @@ async fn gateway_rejects_generic_oauth_start_for_windsurf_provider() {
 }
 
 #[tokio::test]
-async fn gateway_handles_admin_provider_oauth_device_poll_for_windsurf_callback_token() {
+async fn gateway_handles_admin_provider_oauth_device_poll_for_windsurf_one_time_token() {
     let execution_plans = Arc::new(Mutex::new(Vec::<ExecutionPlan>::new()));
     let execution_plans_clone = Arc::clone(&execution_plans);
     let execution_runtime = Router::new().route(
@@ -521,7 +521,7 @@ async fn gateway_handles_admin_provider_oauth_device_poll_for_windsurf_callback_
         "/api/admin/provider-oauth/providers/provider-windsurf/device-poll",
         Some(json!({
             "session_id": "session-windsurf",
-            "callback_url": "https://windsurf.com/show-auth-token?token=firebase-id-token&state=session-windsurf&provider=google"
+            "token": "ott$browser-token"
         })),
     )
     .await;
@@ -590,14 +590,22 @@ async fn gateway_handles_admin_provider_oauth_device_poll_for_windsurf_callback_
             .expect("register plan should execute");
         assert_eq!(register_plan.method, "POST");
         assert_eq!(
-            register_plan
-                .body
-                .json_body
-                .as_ref()
-                .and_then(|body| body.get("firebase_id_token"))
-                .and_then(serde_json::Value::as_str),
-            Some("firebase-id-token")
+            register_plan.content_type.as_deref(),
+            Some("application/proto")
         );
+        assert!(register_plan.body.json_body.is_none());
+        let encoded_body = register_plan
+            .body
+            .body_bytes_b64
+            .as_deref()
+            .expect("register body should be bytes");
+        use base64::Engine as _;
+        let body_bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded_body)
+            .expect("register body should decode");
+        let mut expected_body = vec![0x0a, "ott$browser-token".len() as u8];
+        expected_body.extend_from_slice(b"ott$browser-token");
+        assert_eq!(body_bytes, expected_body);
         assert_eq!(
             register_plan
                 .proxy
@@ -661,7 +669,7 @@ async fn gateway_rejects_windsurf_callback_state_mismatch_and_missing_token() {
         "/api/admin/provider-oauth/providers/provider-windsurf/device-poll",
         Some(json!({
             "session_id": "session-windsurf",
-            "callback_url": "https://windsurf.com/show-auth-token?token=firebase-id-token&state=wrong-state"
+            "callback_url": "https://windsurf.com/show-auth-token?token=ott$wrong-state&state=wrong-state"
         })),
     )
     .await;
@@ -2874,15 +2882,10 @@ async fn gateway_completes_admin_provider_oauth_key_locally_with_trusted_admin_p
     assert_eq!(payload["has_refresh_token"], true);
     assert_eq!(payload["expires_at"], 4_102_444_800u64);
     assert_eq!(payload["email"], "alice@example.com");
-    assert_eq!(payload["account_state_recheck_attempted"], true);
-    let account_state_recheck_error = payload["account_state_recheck_error"]
-        .as_str()
-        .expect("account_state_recheck_error should be string when recheck is attempted");
-    assert!(
-        account_state_recheck_error == "wham/usage API 返回状态码 401"
-            || account_state_recheck_error == "wham/usage API 返回状态码 403"
-            || account_state_recheck_error.starts_with("wham/usage 请求执行失败:"),
-        "unexpected account_state_recheck_error: {account_state_recheck_error}"
+    assert_eq!(payload["account_state_recheck_attempted"], false);
+    assert_eq!(
+        payload["account_state_recheck_error"],
+        serde_json::Value::Null
     );
     assert_eq!(*upstream_hits.lock().expect("mutex should lock"), 0);
     assert_eq!(*token_hits.lock().expect("mutex should lock"), 1);
@@ -6144,10 +6147,10 @@ async fn gateway_auto_removes_manual_oauth_refresh_failure_after_access_token_ex
                     StatusCode::UNAUTHORIZED,
                     Json(json!({
                         "error": {
-                            "message": "Your refresh token has already been used to generate a new access token. Please try signing in again.",
+                            "message": "Could not validate your refresh token. Please try signing in again.",
                             "type": "invalid_request_error",
                             "param": serde_json::Value::Null,
-                            "code": "refresh_token_reused"
+                            "code": "refresh_token_expired"
                         }
                     })),
                 )
@@ -6178,19 +6181,18 @@ async fn gateway_auto_removes_manual_oauth_refresh_failure_after_access_token_ex
         "openai:responses",
         "https://chatgpt.com/backend-api/codex",
     );
-
     let mut key = sample_key(
         "key-codex-oauth-refresh-expired",
         "provider-codex",
         "openai:responses",
-        "stale-codex-access-token",
+        "expired-codex-access-token",
     );
     key.auth_type = "oauth".to_string();
     key.expires_at_unix_secs = Some(1);
     key.encrypted_auth_config = Some(
         encrypt_python_fernet_plaintext(
             DEVELOPMENT_ENCRYPTION_KEY,
-            r#"{"provider_type":"codex","refresh_token":"used-refresh-token","email":"alice@example.com","account_id":"acct-codex-123","plan_type":"plus","expires_at":1}"#,
+            r#"{"provider_type":"codex","refresh_token":"expired-refresh-token","email":"alice@example.com","account_id":"acct-codex-123","plan_type":"plus","expires_at":1}"#,
         )
         .expect("auth config ciphertext should build"),
     );
@@ -6200,7 +6202,6 @@ async fn gateway_auto_removes_manual_oauth_refresh_failure_after_access_token_ex
         vec![endpoint],
         vec![key],
     ));
-
     let (token_url, token_handle) = start_server(token_server).await;
     let oauth_refresh =
         crate::provider_transport::LocalOAuthRefreshCoordinator::with_adapters_for_tests(vec![
@@ -6240,6 +6241,7 @@ async fn gateway_auto_removes_manual_oauth_refresh_failure_after_access_token_ex
         .await
         .expect("refresh payload should parse");
     assert_eq!(refresh_payload["status"], json!("auto_removed"));
+    assert_eq!(refresh_payload["message"], json!("已自动删除"));
     assert_eq!(*token_hits.lock().expect("mutex should lock"), 1);
 
     let keys = provider_catalog_repository

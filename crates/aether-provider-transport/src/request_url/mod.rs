@@ -16,8 +16,8 @@ use crate::gemini_cli::{
 use crate::snapshot::GatewayProviderTransportSnapshot;
 use crate::url::{
     build_claude_messages_url, build_gemini_content_url, build_openai_chat_url,
-    build_openai_responses_url, build_passthrough_path_url,
-    google_openai_compat_base_includes_api_root, normalize_gemini_content_action_path,
+    build_openai_responses_url, build_passthrough_path_url, normalize_gemini_content_action_path,
+    openai_compatible_base_includes_api_root,
 };
 use crate::vertex::{
     build_vertex_api_key_gemini_content_url, build_vertex_api_key_gemini_embedding_url,
@@ -427,7 +427,7 @@ fn build_provider_v1_url(
         .unwrap_or_else(|| upstream_base_url.trim())
         .trim_end_matches('/');
     let path = if base_without_query.ends_with("/v1")
-        || google_openai_compat_base_includes_api_root(base_without_query)
+        || openai_compatible_base_includes_api_root(base_without_query)
     {
         v1_path
     } else {
@@ -1224,7 +1224,7 @@ mod tests {
                 },
             )
             .as_deref(),
-            Some("https://api.openai.example/root/v1/embeddings?tenant=request&trace=1")
+            Some("https://api.openai.example/root/embeddings?tenant=request&trace=1")
         );
         assert_eq!(
             build_transport_request_url(

@@ -1,6 +1,5 @@
 use aether_ai_serving::{
     run_ai_attempt_loop, AiAttemptLoopOutcome, AiAttemptLoopPort, AiExecutionAttempt,
-    UPSTREAM_IS_STREAM_KEY,
 };
 use aether_data_contracts::repository::candidates::RequestCandidateStatus;
 use aether_scheduler_core::{
@@ -26,7 +25,7 @@ use crate::request_candidate_runtime::{
 };
 use crate::{AppState, GatewayError};
 
-const DEFAULT_STREAM_CANDIDATE_WATCHDOG_TIMEOUT_MS: u64 = 300_000;
+const DEFAULT_STREAM_FIRST_BYTE_WATCHDOG_TIMEOUT_MS: u64 = 30_000;
 
 fn attach_redaction_execution_candidate(response: &mut Response<Body>, candidate_id: Option<&str>) {
     if let Some(candidate_id) = candidate_id
@@ -125,7 +124,16 @@ where
             decision,
             plan_kind,
         };
-        run_dynamic_attempt_loop(&port, &mut source).await
+        run_dynamic_attempt_loop(
+            &port,
+            &mut source,
+            trace_id,
+            plan_kind,
+            state
+                .frontdoor_runtime_guards
+                .local_execution_planning_timeout,
+        )
+        .await
     }
     .instrument(span)
     .await
@@ -281,7 +289,16 @@ where
             decision,
             plan_kind,
         };
-        run_dynamic_attempt_loop(&port, &mut source).await
+        run_dynamic_attempt_loop(
+            &port,
+            &mut source,
+            trace_id,
+            plan_kind,
+            state
+                .frontdoor_runtime_guards
+                .local_execution_planning_timeout,
+        )
+        .await
     }
     .instrument(span)
     .await
@@ -290,6 +307,9 @@ where
 async fn run_dynamic_attempt_loop<Port, Source, Attempt>(
     port: &Port,
     source: &mut Source,
+    trace_id: &str,
+    plan_kind: &str,
+    planning_timeout: Duration,
 ) -> Result<LocalExecutionRequestOutcome, GatewayError>
 where
     Port: AiAttemptLoopPort<
@@ -303,7 +323,9 @@ where
 {
     let mut last_attempted = None;
 
-    while let Some(attempt) = source.next_execution_attempt().await? {
+    while let Some(attempt) =
+        next_execution_attempt_with_timeout(source, trace_id, plan_kind, planning_timeout).await?
+    {
         last_attempted = Some((attempt.execution_plan().clone(), attempt.report_context()));
         if let Some(response) = port.execute_attempt(&attempt).await? {
             let remaining = source.drain_execution_attempts().await?;
@@ -320,6 +342,37 @@ where
         port.build_exhaustion(last_plan, last_report_context)
             .await?,
     ))
+}
+
+async fn next_execution_attempt_with_timeout<Source, Attempt>(
+    source: &mut Source,
+    trace_id: &str,
+    plan_kind: &str,
+    planning_timeout: Duration,
+) -> Result<Option<Attempt>, GatewayError>
+where
+    Source: LocalExecutionAttemptSource<Attempt>,
+{
+    match timeout(planning_timeout, source.next_execution_attempt()).await {
+        Ok(result) => result,
+        Err(_) => {
+            let timeout_ms = planning_timeout.as_millis() as u64;
+            warn!(
+                event_name = "local_execution_candidate_planning_timeout",
+                log_type = "ops",
+                trace_id,
+                plan_kind,
+                timeout_ms,
+                phase = "next_execution_attempt",
+                "gateway timed out while planning the next local execution candidate"
+            );
+            Err(GatewayError::LocalExecutionPlanningTimeout {
+                trace_id: trace_id.to_string(),
+                phase: "next_execution_attempt",
+                timeout_ms,
+            })
+        }
+    }
 }
 
 struct StreamAttemptLoopPort<'a> {
@@ -474,25 +527,19 @@ fn should_skip_unused_persistence_from_metadata(
 
 fn resolve_stream_candidate_watchdog_timeout(
     plan: &aether_contracts::ExecutionPlan,
-    report_context: Option<&serde_json::Value>,
+    _report_context: Option<&serde_json::Value>,
 ) -> Duration {
-    let upstream_is_stream = report_context
-        .and_then(|context| context.get(UPSTREAM_IS_STREAM_KEY))
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(true);
     let timeout_ms = plan
         .timeouts
         .as_ref()
-        .and_then(|timeouts| {
-            if upstream_is_stream {
-                timeouts.first_byte_ms.or(timeouts.total_ms)
-            } else {
-                timeouts.total_ms.or(timeouts.first_byte_ms)
-            }
-        })
-        .unwrap_or(DEFAULT_STREAM_CANDIDATE_WATCHDOG_TIMEOUT_MS)
+        .and_then(|timeouts| timeouts.first_byte_ms)
+        .unwrap_or(DEFAULT_STREAM_FIRST_BYTE_WATCHDOG_TIMEOUT_MS)
         .max(1);
     Duration::from_millis(timeout_ms)
+}
+
+fn stream_candidate_watchdog_timeout_message() -> &'static str {
+    "Stream first byte timeout"
 }
 
 async fn execute_stream_candidate_with_watchdog<Fut>(
@@ -534,9 +581,7 @@ where
                     status: RequestCandidateStatus::Failed,
                     status_code: Some(http::StatusCode::GATEWAY_TIMEOUT.as_u16()),
                     error_type: Some("local_stream_candidate_watchdog_timeout".to_string()),
-                    error_message: Some(format!(
-                        "local stream candidate attempt exceeded watchdog timeout of {timeout_ms}ms"
-                    )),
+                    error_message: Some(stream_candidate_watchdog_timeout_message().to_string()),
                     latency_ms: None,
                     started_at_unix_ms: Some(candidate_started_unix_ms),
                     finished_at_unix_ms: Some(finished_at_unix_ms),
@@ -632,6 +677,20 @@ mod tests {
         }
     }
 
+    struct PendingAttemptSource;
+
+    #[async_trait]
+    impl LocalExecutionAttemptSource<()> for PendingAttemptSource {
+        async fn next_execution_attempt(&mut self) -> Result<Option<()>, GatewayError> {
+            std::future::pending::<()>().await;
+            Ok(None)
+        }
+
+        async fn drain_execution_attempts(&mut self) -> Result<Vec<()>, GatewayError> {
+            Ok(Vec::new())
+        }
+    }
+
     fn test_plan(timeouts: Option<ExecutionTimeouts>) -> ExecutionPlan {
         ExecutionPlan {
             request_id: "req_watchdog".to_string(),
@@ -653,6 +712,33 @@ mod tests {
             proxy: None,
             transport_profile: None,
             timeouts,
+        }
+    }
+
+    #[tokio::test]
+    async fn next_execution_attempt_times_out_instead_of_waiting_forever() {
+        let mut source = PendingAttemptSource;
+
+        let err = next_execution_attempt_with_timeout(
+            &mut source,
+            "trace-planning-timeout",
+            "openai_responses_sync",
+            Duration::from_millis(5),
+        )
+        .await
+        .expect_err("pending candidate planning should time out");
+
+        match err {
+            GatewayError::LocalExecutionPlanningTimeout {
+                trace_id,
+                phase,
+                timeout_ms,
+            } => {
+                assert_eq!(trace_id, "trace-planning-timeout");
+                assert_eq!(phase, "next_execution_attempt");
+                assert_eq!(timeout_ms, 5);
+            }
+            other => panic!("unexpected error: {other:?}"),
         }
     }
 
@@ -688,37 +774,57 @@ mod tests {
 
         assert_eq!(
             timeout,
-            Duration::from_millis(DEFAULT_STREAM_CANDIDATE_WATCHDOG_TIMEOUT_MS)
+            Duration::from_millis(DEFAULT_STREAM_FIRST_BYTE_WATCHDOG_TIMEOUT_MS)
         );
     }
 
     #[test]
-    fn stream_candidate_watchdog_prefers_total_timeout_when_upstream_non_stream() {
+    fn stream_candidate_watchdog_ignores_total_timeout_for_stream_upstream() {
+        let report_context = json!({"upstream_is_stream": true});
+        let timeout = resolve_stream_candidate_watchdog_timeout(
+            &test_plan(Some(ExecutionTimeouts {
+                total_ms: Some(90_000),
+                ..ExecutionTimeouts::default()
+            })),
+            Some(&report_context),
+        );
+
+        assert_eq!(
+            timeout,
+            Duration::from_millis(DEFAULT_STREAM_FIRST_BYTE_WATCHDOG_TIMEOUT_MS)
+        );
+    }
+
+    #[test]
+    fn stream_candidate_watchdog_prefers_first_byte_timeout_when_upstream_non_stream() {
         let report_context = json!({"upstream_is_stream": false});
         let timeout = resolve_stream_candidate_watchdog_timeout(
             &test_plan(Some(ExecutionTimeouts {
-                first_byte_ms: Some(300_000),
+                first_byte_ms: Some(12_345),
                 total_ms: Some(599_000),
                 ..ExecutionTimeouts::default()
             })),
             Some(&report_context),
         );
 
-        assert_eq!(timeout, Duration::from_millis(599_000));
+        assert_eq!(timeout, Duration::from_millis(12_345));
     }
 
     #[test]
-    fn stream_candidate_watchdog_falls_back_to_first_byte_when_upstream_non_stream_lacks_total() {
+    fn stream_candidate_watchdog_ignores_total_timeout_when_upstream_non_stream() {
         let report_context = json!({"upstream_is_stream": false});
         let timeout = resolve_stream_candidate_watchdog_timeout(
             &test_plan(Some(ExecutionTimeouts {
-                first_byte_ms: Some(300_000),
+                total_ms: Some(599_000),
                 ..ExecutionTimeouts::default()
             })),
             Some(&report_context),
         );
 
-        assert_eq!(timeout, Duration::from_millis(300_000));
+        assert_eq!(
+            timeout,
+            Duration::from_millis(DEFAULT_STREAM_FIRST_BYTE_WATCHDOG_TIMEOUT_MS)
+        );
     }
 
     #[test]
@@ -795,7 +901,7 @@ mod tests {
         assert!(record
             .error_message
             .as_deref()
-            .is_some_and(|message| message.contains("25ms")));
+            .is_some_and(|message| message == "Stream first byte timeout"));
         assert_eq!(record.candidate_index, 2);
     }
 }
