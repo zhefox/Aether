@@ -3536,6 +3536,13 @@ FROM usage_billing_facts AS "usage"
                 .push("\"usage\".user_id = ")
                 .push_bind(user_id.to_string());
         }
+        if let Some(api_key_id) = query.api_key_id.as_deref() {
+            builder.push(if has_where { " AND " } else { " WHERE " });
+            has_where = true;
+            builder
+                .push("\"usage\".api_key_id = ")
+                .push_bind(api_key_id.to_string());
+        }
         builder.push(if has_where { " AND " } else { " WHERE " });
         has_where = true;
         builder.push("\"usage\".billing_status = 'settled'");
@@ -3678,6 +3685,7 @@ WHERE hour_utc >= $1
                     created_from_unix_secs: dashboard_utc_to_unix_secs(start_utc),
                     created_until_unix_secs: dashboard_utc_to_unix_secs(end_utc),
                     user_id: user_id.map(ToOwned::to_owned),
+                    api_key_id: None,
                 })
                 .await;
         };
@@ -3689,6 +3697,7 @@ WHERE hour_utc >= $1
                     created_from_unix_secs: dashboard_utc_to_unix_secs(start_utc),
                     created_until_unix_secs: dashboard_utc_to_unix_secs(end_utc),
                     user_id: user_id.map(ToOwned::to_owned),
+                    api_key_id: None,
                 })
                 .await;
         };
@@ -3701,6 +3710,7 @@ WHERE hour_utc >= $1
                     created_from_unix_secs: dashboard_utc_to_unix_secs(raw_start),
                     created_until_unix_secs: dashboard_utc_to_unix_secs(raw_end),
                     user_id: user_id.map(ToOwned::to_owned),
+                    api_key_id: None,
                 })
                 .await?,
             );
@@ -3723,6 +3733,7 @@ WHERE hour_utc >= $1
                     created_from_unix_secs: dashboard_utc_to_unix_secs(raw_start),
                     created_until_unix_secs: dashboard_utc_to_unix_secs(raw_end),
                     user_id: user_id.map(ToOwned::to_owned),
+                    api_key_id: None,
                 })
                 .await?,
             );
@@ -3737,6 +3748,9 @@ WHERE hour_utc >= $1
     ) -> Result<StoredUsageSettledCostSummary, DataLayerError> {
         let start_utc = dashboard_unix_secs_to_utc(query.created_from_unix_secs);
         let end_utc = dashboard_unix_secs_to_utc(query.created_until_unix_secs);
+        if query.api_key_id.is_some() {
+            return self.summarize_usage_settled_cost_raw(query).await;
+        }
         let user_id = query.user_id.as_deref();
         let Some(cutoff_utc) = self.read_stats_daily_cutoff_date().await? else {
             return self
