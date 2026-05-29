@@ -1596,6 +1596,7 @@ async fn send_error(tx: &FrameSender, stream_id: u32, msg: &str) {
     .await;
 }
 
+#[cfg(test)]
 fn build_streaming_request_body(
     body_rx: mpsc::Receiver<TunnelFrame>,
     body_size: Arc<AtomicUsize>,
@@ -1625,6 +1626,7 @@ fn build_spooled_request_body(
     upstream_client::stream_request_body(body_stream)
 }
 
+#[cfg(test)]
 fn build_prefixed_request_body(
     prefix_chunks: Vec<Bytes>,
     body_rx: mpsc::Receiver<TunnelFrame>,
