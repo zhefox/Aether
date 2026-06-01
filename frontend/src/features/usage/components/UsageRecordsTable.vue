@@ -338,7 +338,20 @@
           </template>
         </div>
 
-        <!-- 第三行：性能指标 -->
+        <!-- 第三行：用户 + 提供商 -->
+        <div
+          v-if="isAdmin"
+          class="mt-1 flex min-w-0 items-center text-[10px] leading-3.5 text-muted-foreground"
+        >
+          <span
+            class="min-w-0 flex-1 truncate"
+            :title="formatRecordUserProviderLine(record)"
+          >
+            {{ formatRecordUserProviderLine(record) }}
+          </span>
+        </div>
+
+        <!-- 第四行：性能指标 -->
         <div class="mt-1.5 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-1 text-[10px] leading-3.5 text-muted-foreground">
           <span
             class="min-w-0 truncate whitespace-nowrap tabular-nums text-foreground"
@@ -1385,6 +1398,17 @@ function formatRecordTime(dateStr: string): string {
   const minutes = String(date.getMinutes()).padStart(2, '0')
   const seconds = String(date.getSeconds()).padStart(2, '0')
   return `${hours}:${minutes}:${seconds}`
+}
+
+function getRecordUserName(record: UsageRecord): string {
+  return record.username || record.user_email || (record.user_id ? `User ${record.user_id}` : '已删除用户')
+}
+
+function formatRecordUserProviderLine(record: UsageRecord): string {
+  const userKeyName = record.api_key?.name || '-'
+  const providerName = record.provider || '-'
+  const providerKeyName = record.provider_key_name || '-'
+  return `${getRecordUserName(record)} / ${userKeyName} · ${providerName} / ${providerKeyName}`
 }
 
 watch(() => props.filterSearch, (value) => {
