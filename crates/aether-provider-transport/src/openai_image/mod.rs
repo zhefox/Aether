@@ -190,6 +190,17 @@ mod tests {
     }
 
     #[test]
+    fn standard_openai_image_url_preserves_edit_surface() {
+        let mut transport = sample_transport();
+        transport.provider.provider_type = "openai".to_string();
+
+        let url =
+            build_openai_image_upstream_url(&transport, Some("/v1/images/edits"), Some("trace=1"));
+
+        assert_eq!(url, "https://api.openai.com/v1/images/edits?trace=1");
+    }
+
+    #[test]
     fn chatgpt_web_is_supported_by_dedicated_openai_image_transport_policy() {
         let mut transport = sample_transport();
         transport.provider.provider_type = "chatgpt_web".to_string();
