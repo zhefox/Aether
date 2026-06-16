@@ -3087,6 +3087,7 @@ fn openai_responses_stream_event_is_known_noop(event_type: &str) -> bool {
     matches!(
         event_type,
         "response.queued"
+            | "response.metadata"
             | "response.output_text.annotation.added"
             | "response.audio.delta"
             | "response.audio.done"
