@@ -2104,6 +2104,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn oauth_invalidation_marks_codex_inactive_pat_owner_403_as_token_invalid() {
+        let state = codex_state();
+        let plan = sample_codex_plan();
+
+        apply_local_execution_effect(
+            &state,
+            LocalExecutionEffectContext {
+                plan: &plan,
+                report_context: None,
+            },
+            LocalExecutionEffect::OauthInvalidation(LocalOAuthInvalidationEffect {
+                status_code: 403,
+                response_text: Some(
+                    r#"{"error":{"code":"biscuit_baker_service_auth_credential_error_status","message":"Personal access token owner is inactive."},"status":403}"#,
+                ),
+            }),
+        )
+        .await;
+
+        let stored_key = state
+            .read_provider_catalog_keys_by_ids(std::slice::from_ref(&plan.key_id))
+            .await
+            .expect("provider catalog keys should load")
+            .into_iter()
+            .next()
+            .expect("stored key should exist");
+        assert!(stored_key.oauth_invalid_at_unix_secs.is_some());
+        assert_eq!(
+            stored_key.oauth_invalid_reason.as_deref(),
+            Some("[OAUTH_EXPIRED] Personal access token owner is inactive.")
+        );
+        assert_eq!(
+            stored_key
+                .status_snapshot
+                .as_ref()
+                .and_then(|value| value.get("oauth"))
+                .and_then(|value| value.get("code"))
+                .and_then(Value::as_str),
+            Some("invalid")
+        );
+    }
+
+    #[tokio::test]
     async fn health_failure_projection_updates_key_health_for_format() {
         let state = health_state();
         let plan = sample_plan();

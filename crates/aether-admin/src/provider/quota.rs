@@ -952,6 +952,9 @@ pub fn codex_looks_like_token_invalidated(message: Option<&str>) -> bool {
         || lowered.contains("authentication token has been invalidated")
         || lowered.contains("token has been invalidated")
         || lowered.contains("token invalidated")
+        || lowered.contains("personal access token owner is inactive")
+        || lowered.contains("biscuit_baker_service_auth_credential_error_status")
+        || lowered.contains("auth_credential")
         || lowered.contains("invalidated")
         || lowered.contains("revoked")
         || lowered.contains("已撤销")
@@ -1773,6 +1776,25 @@ mod tests {
             codex_runtime_invalid_reason(403, Some("account has been deactivated")),
             Some(format!(
                 "{OAUTH_ACCOUNT_BLOCK_PREFIX}account has been deactivated"
+            ))
+        );
+    }
+
+    #[test]
+    fn codex_runtime_invalid_reason_marks_inactive_pat_owner_403_as_token_invalid() {
+        assert_eq!(
+            codex_runtime_invalid_reason(403, Some("Personal access token owner is inactive.")),
+            Some(format!(
+                "{OAUTH_EXPIRED_PREFIX}Personal access token owner is inactive."
+            ))
+        );
+        assert_eq!(
+            codex_runtime_invalid_reason(
+                403,
+                Some("biscuit_baker_service_auth_credential_error_status")
+            ),
+            Some(format!(
+                "{OAUTH_EXPIRED_PREFIX}biscuit_baker_service_auth_credential_error_status"
             ))
         );
     }
