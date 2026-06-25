@@ -2432,9 +2432,12 @@ async function loadDetail(id: string, silent = false) {
       timelineRef.value?.refresh()
     }
 
-    // 已完成请求需要停止自动刷新；进行中的请求只在用户手动开启后才保持刷新
-    if (props.isOpen && isRequestCompleted()) {
-      stopAutoRefresh()
+    if (props.isOpen) {
+      if (isRequestCompleted()) {
+        stopAutoRefresh()
+      } else if (!silent) {
+        startAutoRefresh()
+      }
     }
   } catch (err) {
     if (requestId !== loadDetailRequestId) return

@@ -169,7 +169,7 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'dashboard',
         name: 'AdminDashboard',
-        component: () => importWithRetry(() => import('@/views/shared/Dashboard.vue'))
+        component: () => importWithRetry(() => import('@/views/admin/AdminOperationsDashboard.vue'))
       },
       {
         path: 'users',
