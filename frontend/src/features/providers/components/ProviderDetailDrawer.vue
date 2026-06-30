@@ -112,137 +112,30 @@
                         <div class="cursor-grab active:cursor-grabbing text-muted-foreground/30 group-hover/item:text-muted-foreground transition-colors shrink-0">
                           <GripVertical class="w-4 h-4" />
                         </div>
-                        <div class="flex flex-col min-w-0">
-                          <div class="flex items-center gap-1.5">
-                            <span
-                              class="text-sm font-medium truncate"
-                              :class="key.name ? 'cursor-pointer hover:text-primary transition-colors' : ''"
-                              :title="key.name ? legacyT('点击复制') : ''"
-                              @click.stop="key.name && copyToClipboard(key.name)"
-                            >{{ key.name || legacyT('未命名密钥') }}</span>
-                            <!-- OAuth 订阅类型标签 (Codex) -->
-                            <Badge
-                              v-if="key.oauth_plan_type"
-                              variant="outline"
-                              class="text-[10px] px-1.5 py-0 shrink-0"
-                              :class="getOAuthPlanTypeClass(key.oauth_plan_type)"
-                            >
-                              {{ formatOAuthPlanType(key.oauth_plan_type) }}
-                            </Badge>
-                            <Badge
-                              v-if="getOAuthOrgBadge(key)"
-                              variant="secondary"
-                              class="text-[9px] px-1 py-0 h-4 shrink-0"
-                              :title="getOAuthOrgBadge(key)?.title"
-                            >
-                              {{ getOAuthOrgBadge(key)?.label }}
-                            </Badge>
-                            <!-- Kiro 订阅类型标签 -->
-                            <Badge
-                              v-if="shouldShowKiroSubscriptionBadge(key)"
-                              variant="outline"
-                              class="text-[10px] px-1.5 py-0 shrink-0"
-                              :class="getOAuthPlanTypeClass(getKiroSubscriptionBadgeLabel(key))"
-                            >
-                              {{ getKiroSubscriptionBadgeLabel(key) }}
-                            </Badge>
-                          </div>
-                          <div class="flex items-center gap-1">
-                            <span class="text-[11px] font-mono text-muted-foreground">
-                              {{ getProviderMaskedSecretLabel(key, provider.provider_type) }}
-                            </span>
-                            <Button
-                              v-if="canExportOAuthCredential(key)"
-                              variant="ghost"
-                              size="icon"
-                              class="h-4 w-4 shrink-0"
-                              :title="legacyT('下载 OAuth 授权文件')"
-                              @click.stop="downloadRefreshToken(key)"
-                            >
-                              <Download class="w-2.5 h-2.5" />
-                            </Button>
-                            <Button
-                              v-else
-                              variant="ghost"
-                              size="icon"
-                              class="h-4 w-4 shrink-0"
-                              :title="legacyT('复制密钥')"
-                              @click.stop="copyFullKey(key)"
-                            >
-                              <Copy class="w-2.5 h-2.5" />
-                            </Button>
-                            <!-- OAuth 状态（失效/过期/倒计时）和刷新按钮 -->
-                            <template v-if="shouldShowOAuthRefreshControl(key, provider.provider_type)">
-                              <!-- 账号级别异常：醒目提示 + 清除按钮 -->
-                              <template v-if="isAccountLevelBlock(key)">
-                                <Badge
-                                  variant="destructive"
-                                  class="text-[10px] px-1.5 py-0 shrink-0 gap-0.5"
-                                  :title="getOAuthStatusTitle(key)"
-                                >
-                                  <ShieldX class="w-2.5 h-2.5" />
-                                  {{ legacyT('账号异常') }}
-                                </Badge>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  class="h-4 w-4 shrink-0 text-destructive hover:text-destructive"
-                                  :disabled="clearingOAuthInvalidKeyId === key.id"
-                                  :title="legacyT('清除异常标记（确认账号已完成验证后使用）')"
-                                  @click.stop="handleClearOAuthInvalid(key)"
-                                >
-                                  <RefreshCw
-                                    class="w-2.5 h-2.5"
-                                    :class="{ 'animate-spin': clearingOAuthInvalidKeyId === key.id }"
-                                  />
-                                </Button>
-                              </template>
-                              <!-- 普通 OAuth 状态 -->
-                              <template v-else>
-                                <span
-                                  class="text-[10px]"
-                                  :class="{
-                                    'text-destructive': getKeyOAuthExpires(key)?.isInvalid || getKeyOAuthExpires(key)?.isExpired,
-                                    'text-warning': getKeyOAuthExpires(key)?.isExpiringSoon && !getKeyOAuthExpires(key)?.isExpired && !getKeyOAuthExpires(key)?.isInvalid,
-                                    'text-muted-foreground': !getKeyOAuthExpires(key)?.isExpired && !getKeyOAuthExpires(key)?.isExpiringSoon && !getKeyOAuthExpires(key)?.isInvalid
-                                  }"
-                                  :title="getOAuthStatusTitle(key)"
-                                >
-                                  {{ getKeyOAuthExpires(key)?.text }}
-                                </span>
-                                <Badge
-                                  v-if="key.oauth_temporary"
-                                  variant="outline"
-                                  class="text-[10px] px-1.5 py-0 shrink-0"
-                                  :title="legacyT('仅通过 Access Token 导入，无法自动刷新，到期后需要重新导入')"
-                                >
-                                  {{ legacyT('临时') }}
-                                </Badge>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  class="h-4 w-4 shrink-0"
-                                  :disabled="refreshingOAuthKeyId === key.id || !canRefreshOAuthCredential(key)"
-                                  :title="getOAuthRefreshButtonTitle(key)"
-                                  @click.stop="handleRefreshOAuth(key)"
-                                >
-                                  <RefreshCw
-                                    class="w-2.5 h-2.5"
-                                    :class="{ 'animate-spin': refreshingOAuthKeyId === key.id }"
-                                  />
-                                </Button>
-                              </template>
-                            </template>
-                            <!-- Antigravity 账号未激活提示 -->
-                            <span
-                              v-if="provider.provider_type === 'antigravity' && key.is_active && isOAuthManagedCredential(key) && !hasAntigravityQuotaDisplayData(key)"
-                              class="text-[10px] text-orange-500 dark:text-orange-400"
-                              :title="legacyT('该账号尚未完成 Gemini Code Assist 激活，无法获取配额和使用模型')"
-                            >
-                              {{ legacyT('账号未激活') }}
-                            </span>
-                          </div>
-                        </div>
+                        <ProviderKeyIdentityBlock
+                          :api-key="key"
+                          :masked-secret-label="getProviderMaskedSecretLabel(key, provider.provider_type)"
+                          :oauth-plan-label="key.oauth_plan_type ? formatOAuthPlanType(key.oauth_plan_type) : null"
+                          :oauth-plan-class="key.oauth_plan_type ? getOAuthPlanTypeClass(key.oauth_plan_type) : ''"
+                          :oauth-org-badge="getOAuthOrgBadge(key)"
+                          :kiro-subscription-label="shouldShowKiroSubscriptionBadge(key) ? getKiroSubscriptionBadgeLabel(key) : null"
+                          :kiro-subscription-class="shouldShowKiroSubscriptionBadge(key) ? getOAuthPlanTypeClass(getKiroSubscriptionBadgeLabel(key)) : ''"
+                          :can-export-credential="canExportOAuthCredential(key)"
+                          :show-o-auth-refresh-control="shouldShowOAuthRefreshControl(key, provider.provider_type)"
+                          :account-level-block="isAccountLevelBlock(key)"
+                          :oauth-status="getKeyOAuthExpires(key)"
+                          :oauth-status-title="getOAuthStatusTitle(key)"
+                          :oauth-refresh-button-title="getOAuthRefreshButtonTitle(key)"
+                          :can-refresh-credential="canRefreshOAuthCredential(key)"
+                          :clearing-o-auth-invalid="clearingOAuthInvalidKeyId === key.id"
+                          :refreshing-o-auth="refreshingOAuthKeyId === key.id"
+                          :antigravity-inactive="provider.provider_type === 'antigravity' && key.is_active && isOAuthManagedCredential(key) && !hasAntigravityQuotaDisplayData(key)"
+                          @copy-name="copyToClipboard"
+                          @download-credential="downloadRefreshToken(key)"
+                          @copy-full-key="copyFullKey(key)"
+                          @clear-o-auth-invalid="handleClearOAuthInvalid(key)"
+                          @refresh-o-auth="handleRefreshOAuth(key)"
+                        />
                       </div>
                       <ProviderKeyActionCluster
                         :api-key="key"
@@ -967,17 +860,13 @@ import {
   Plus,
   Key,
   Loader2,
-  RefreshCw,
   GripVertical,
-  Copy,
-  Download,
   ShieldX,
 } from 'lucide-vue-next'
 import { parseApiError } from '@/utils/errorParser'
 import { useEscapeKey } from '@/composables/useEscapeKey'
 import { useI18n } from '@/i18n'
 import Button from '@/components/ui/button.vue'
-import Badge from '@/components/ui/badge.vue'
 import Card from '@/components/ui/card.vue'
 import { useToast } from '@/composables/useToast'
 import { useConfirm } from '@/composables/useConfirm'
@@ -1009,6 +898,7 @@ import AntigravityQuotaDialog from '@/features/providers/components/AntigravityQ
 import FailoverRulesDialog from '@/features/providers/components/FailoverRulesDialog.vue'
 import ProviderDetailHeader from '@/features/providers/components/ProviderDetailHeader.vue'
 import ProviderKeyActionCluster from '@/features/providers/components/ProviderKeyActionCluster.vue'
+import ProviderKeyIdentityBlock from '@/features/providers/components/ProviderKeyIdentityBlock.vue'
 import ProviderMonthlyQuotaCard from '@/features/providers/components/ProviderMonthlyQuotaCard.vue'
 import ProviderQuotaProgressRow from '@/features/providers/components/ProviderQuotaProgressRow.vue'
 import ProviderQuotaSectionHeader from '@/features/providers/components/ProviderQuotaSectionHeader.vue'

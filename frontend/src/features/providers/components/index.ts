@@ -1,5 +1,6 @@
 export { default as ProviderFormDialog } from './ProviderFormDialog.vue'
 export { default as ProviderKeyActionCluster } from './ProviderKeyActionCluster.vue'
+export { default as ProviderKeyIdentityBlock } from './ProviderKeyIdentityBlock.vue'
 export { default as ProviderMonthlyQuotaCard } from './ProviderMonthlyQuotaCard.vue'
 export { default as ProviderQuotaProgressRow } from './ProviderQuotaProgressRow.vue'
 export { default as ProviderQuotaSectionHeader } from './ProviderQuotaSectionHeader.vue'
