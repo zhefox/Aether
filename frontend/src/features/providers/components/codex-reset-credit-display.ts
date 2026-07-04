@@ -11,6 +11,12 @@ export interface CodexResetCreditDisplayItem {
   title: string
 }
 
+interface CodexResetCreditDisplayCandidate {
+  id?: string | null
+  expiresAt?: number | null
+  remainingSeconds: number
+}
+
 export function getCodexResetCreditAvailableCount(
   snapshot: QuotaResetCreditsSnapshot | null | undefined,
 ): number | null {
@@ -20,14 +26,6 @@ export function getCodexResetCreditAvailableCount(
 
 export function formatCodexResetCreditCount(count: number | null | undefined): string {
   return `共 ${count ?? 0} 次机会`
-}
-
-function codexResetCreditDisplayKey(item: QuotaResetCreditSnapshot): string | null {
-  const explicit = item.display_key?.trim()
-  if (explicit) return explicit
-  const id = item.id?.trim()
-  if (!id) return null
-  return id.split('-')[0]?.trim() || null
 }
 
 function codexResetCreditRemainingSeconds(
@@ -64,20 +62,25 @@ export function getVisibleCodexResetCreditItems(
   return credits
     .map((item) => {
       if (!codexResetCreditStatusIsDisplayable(item)) return null
-      const displayKey = codexResetCreditDisplayKey(item)
       const remainingSeconds = codexResetCreditRemainingSeconds(item, snapshot, nowUnixSecs)
-      if (!displayKey || remainingSeconds === null || remainingSeconds <= 0) return null
+      if (remainingSeconds === null || remainingSeconds <= 0) return null
       return {
         id: item.id,
-        displayKey,
         expiresAt: item.expires_at,
         remainingSeconds,
-        title: item.id ? `${item.id}` : displayKey,
-      } satisfies CodexResetCreditDisplayItem
+      } satisfies CodexResetCreditDisplayCandidate
     })
-    .filter((item): item is CodexResetCreditDisplayItem => item !== null)
+    .filter((item): item is CodexResetCreditDisplayCandidate => item !== null)
     .sort((a, b) => a.remainingSeconds - b.remainingSeconds)
     .slice(0, limit)
+    .map((item, index) => {
+      const displayKey = `Key-${index + 1}`
+      return {
+        ...item,
+        displayKey,
+        title: `Codex 重置机会 ${displayKey}`,
+      } satisfies CodexResetCreditDisplayItem
+    })
 }
 
 export function formatCodexResetCreditDays(remainingSeconds: number): string {

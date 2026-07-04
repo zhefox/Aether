@@ -28,7 +28,7 @@ describe('codex reset credit display helpers', () => {
     expect(getVisibleCodexResetCreditItems(snapshot, 1_700_000_000)).toEqual([])
   })
 
-  it('sorts available detail items by remaining time and limits visible items to five', () => {
+  it('sorts available detail items by remaining time and labels visible items with short ordinal keys', () => {
     const snapshot: QuotaResetCreditsSnapshot = {
       available_count: 7,
       updated_at: 1_700_000_000,
@@ -40,18 +40,30 @@ describe('codex reset credit display helpers', () => {
         { id: 'missing-expiry-0000', status: 'available' },
         { id: 'first-0000', status: 'available', expires_at: 1_700_010_000 },
         { id: 'second-0000', status: 'available', expires_at: 1_700_020_000 },
-        { id: 'fourth-0000', display_key: 'displayed', status: 'available', expires_at: 1_700_040_000 },
+        {
+          id: 'fourth-0000',
+          display_key: 'RateLimitResetCredit_05cbb6eeeb9c81918e011d8300f9ebfb',
+          status: 'available',
+          expires_at: 1_700_040_000,
+        },
       ],
     }
 
     const items = getVisibleCodexResetCreditItems(snapshot, 1_700_000_000)
 
     expect(items.map(item => item.displayKey)).toEqual([
-      'first',
-      'second',
-      'third',
-      'displayed',
-      'fifth',
+      'Key-1',
+      'Key-2',
+      'Key-3',
+      'Key-4',
+      'Key-5',
+    ])
+    expect(items.map(item => item.title)).toEqual([
+      'Codex 重置机会 Key-1',
+      'Codex 重置机会 Key-2',
+      'Codex 重置机会 Key-3',
+      'Codex 重置机会 Key-4',
+      'Codex 重置机会 Key-5',
     ])
     expect(items.map(item => item.remainingSeconds)).toEqual([
       10_000,
