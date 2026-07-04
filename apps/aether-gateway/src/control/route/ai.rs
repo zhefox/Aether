@@ -97,6 +97,17 @@ pub(super) fn classify_ai_public_route(
             "openai:video",
             true,
         ))
+    } else if method == http::Method::POST
+        && matches!(normalized_path, "/v1/interactions" | "/v1beta/interactions")
+    {
+        Some(classified_with_request_auth_channel(
+            "ai_public",
+            "gemini",
+            "interactions",
+            "api_key",
+            "gemini:interactions",
+            true,
+        ))
     } else if method == http::Method::POST && is_gemini_models_route(normalized_path) {
         if normalized_path.ends_with(":predictLongRunning") {
             Some(classified(

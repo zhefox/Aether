@@ -82,14 +82,14 @@ pub(super) fn provider_query_standard_test_unsupported_reason(
                 api_format,
             )
         }
-        "gemini:generate_content" | "gemini:embedding"
+        "gemini:generate_content" | "gemini:embedding" | "gemini:interactions"
             if crate::provider_transport::is_vertex_transport_context(transport) =>
         {
             aether_provider_transport::vertex::local_vertex_gemini_transport_unsupported_reason_with_network(
                 transport,
             )
         }
-        "gemini:generate_content" | "gemini:embedding" => {
+        "gemini:generate_content" | "gemini:embedding" | "gemini:interactions" => {
             crate::provider_transport::policy::local_gemini_transport_unsupported_reason_with_network(
                 transport,
                 api_format,
@@ -250,6 +250,7 @@ pub(super) fn provider_query_test_adapter_for_provider_api_format(
             | "openai:responses:compact"
             | "claude:messages"
             | "gemini:generate_content"
+            | "gemini:interactions"
             | "openai:embedding"
             | "gemini:embedding"
             | "jina:embedding"
@@ -366,7 +367,7 @@ pub(super) fn provider_query_transport_supports_model_test_execution(
                 transport, api_format,
             )
         }
-        "gemini:generate_content" | "gemini:embedding" => {
+        "gemini:generate_content" | "gemini:embedding" | "gemini:interactions" => {
             if crate::provider_transport::is_vertex_transport_context(transport) {
                 aether_provider_transport::vertex::supports_local_vertex_gemini_transport_with_network(transport)
             } else {
