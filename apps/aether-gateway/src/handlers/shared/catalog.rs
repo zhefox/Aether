@@ -579,9 +579,25 @@ fn model_quota_window_snapshot(
 
 fn canonical_antigravity_model_label(model_name: &str) -> Option<&'static str> {
     match model_name.trim() {
+        "claude-opus-4-6-thinking" => Some("Claude Opus 4.6 Thinking"),
+        "claude-sonnet-4-6" => Some("Claude Sonnet 4.6"),
         "gemini-3.5-flash-extra-low" => Some("Gemini 3.5 Flash Extra Low"),
         "gemini-3.5-flash-low" => Some("Gemini 3.5 Flash Low"),
+        "gemini-3.1-pro-high" => Some("Gemini 3.1 Pro High"),
+        "gemini-3.1-pro-low" => Some("Gemini 3.1 Pro Low"),
+        "gemini-pro-agent" => Some("Gemini Pro Agent"),
+        "gemini-3.1-flash-image" => Some("Gemini 3.1 Flash Image"),
+        "gemini-3.1-flash-lite" => Some("Gemini 3.1 Flash Lite"),
         "gemini-3-flash-agent" => Some("Gemini 3 Flash Agent"),
+        "gemini-3-flash" => Some("Gemini 3 Flash"),
+        "gemini-2.5-pro" => Some("Gemini 2.5 Pro"),
+        "gemini-2.5-flash-thinking" => Some("Gemini 2.5 Flash Thinking"),
+        "gemini-2.5-flash" => Some("Gemini 2.5 Flash"),
+        "gemini-2.5-flash-lite" => Some("Gemini 2.5 Flash Lite"),
+        "gpt-oss-120b-medium" => Some("GPT-OSS 120B Medium"),
+        "tab_flash_lite_preview" => Some("Tab Flash Lite Preview"),
+        "tab_jump_flash_lite_preview" => Some("Tab Jump Flash Lite Preview"),
+        "models/proactive-observer" => Some("Proactive Observer"),
         _ => None,
     }
 }
@@ -3739,14 +3755,22 @@ mod tests {
     }
 
     #[test]
-    fn sync_provider_key_quota_status_snapshot_labels_antigravity_flash_tiers_by_model_id() {
+    fn sync_provider_key_quota_status_snapshot_labels_antigravity_models_by_model_id() {
         let upstream_metadata = json!({
             "antigravity": {
                 "updated_at": 1_775_553_285u64,
                 "quota_by_model": {
                     "gemini-3.5-flash-extra-low": { "remaining_fraction": 1.0 },
                     "gemini-3.5-flash-low": { "remaining_fraction": 0.75 },
-                    "gemini-3-flash-agent": { "remaining_fraction": 0.5 }
+                    "gemini-3-flash-agent": { "remaining_fraction": 0.5 },
+                    "gemini-2.5-flash": {
+                        "display_name": "Gemini 3.1 Flash Lite",
+                        "remaining_fraction": 0.4
+                    },
+                    "claude-sonnet-4-6": {
+                        "display_name": "Claude Sonnet 4.6 (Thinking)",
+                        "remaining_fraction": 0.3
+                    }
                 }
             }
         });
@@ -3781,6 +3805,14 @@ mod tests {
         assert_eq!(
             label_for_model("gemini-3-flash-agent"),
             Some(json!("Gemini 3 Flash Agent"))
+        );
+        assert_eq!(
+            label_for_model("gemini-2.5-flash"),
+            Some(json!("Gemini 2.5 Flash"))
+        );
+        assert_eq!(
+            label_for_model("claude-sonnet-4-6"),
+            Some(json!("Claude Sonnet 4.6"))
         );
     }
 

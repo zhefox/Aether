@@ -373,13 +373,6 @@
                             <template #footer>
                               <div class="mt-0.5 space-y-0.5">
                                 <div
-                                  v-if="item.label !== item.model"
-                                  class="text-[9px] text-muted-foreground/55 truncate font-mono"
-                                  :title="item.model"
-                                >
-                                  {{ item.model }}
-                                </div>
-                                <div
                                   v-if="item.resetSeconds !== null || item.usedPercent > 0"
                                   class="text-[9px] text-muted-foreground/70"
                                 >
@@ -967,6 +960,10 @@ import ProviderMonthlyQuotaCard from '@/features/providers/components/ProviderMo
 import ProviderQuotaProgressRow from '@/features/providers/components/ProviderQuotaProgressRow.vue'
 import ProviderQuotaSectionHeader from '@/features/providers/components/ProviderQuotaSectionHeader.vue'
 import { useProxyNodesStore } from '@/stores/proxy-nodes'
+import {
+  compareAntigravityQuotaItems,
+  resolveAntigravityQuotaLabel,
+} from '@/features/providers/utils/antigravityQuota'
 import {
   deleteEndpointKey,
   recoverKeyHealth,
@@ -3385,32 +3382,6 @@ function coerceAntigravityRemainingFraction(value: number | string | null | unde
   return Math.min(Math.max(numericValue, 0), 1)
 }
 
-function antigravityQuotaItemSort(a: AntigravityQuotaItem, b: AntigravityQuotaItem): number {
-  return (a.remainingPercent - b.remainingPercent)
-    || ((a.resetSeconds ?? Number.POSITIVE_INFINITY) - (b.resetSeconds ?? Number.POSITIVE_INFINITY))
-    || a.label.localeCompare(b.label)
-    || a.model.localeCompare(b.model)
-}
-
-function isOpaqueAntigravityQuotaIdentifier(value: string): boolean {
-  return value.trim().startsWith('RateLimitResetCredit_')
-}
-
-function resolveAntigravityQuotaLabel(
-  model: string,
-  rawLabel: unknown,
-  opaqueDisplayIndex: { value: number },
-): string {
-  const candidate = String(rawLabel || '').trim()
-  if (candidate && !isOpaqueAntigravityQuotaIdentifier(candidate)) return candidate
-  if (isOpaqueAntigravityQuotaIdentifier(model) || (candidate && isOpaqueAntigravityQuotaIdentifier(candidate))) {
-    const label = `Key-${opaqueDisplayIndex.value}`
-    opaqueDisplayIndex.value += 1
-    return label
-  }
-  return candidate || model
-}
-
 function getAntigravityQuotaItems(metadata: UpstreamMetadata | null | undefined): AntigravityQuotaItem[] {
   const quotaByModel = metadata?.antigravity?.quota_by_model
   if (!quotaByModel || typeof quotaByModel !== 'object') return []
@@ -3449,7 +3420,7 @@ function getAntigravityQuotaItems(metadata: UpstreamMetadata | null | undefined)
     })
   }
 
-  items.sort(antigravityQuotaItemSort)
+  items.sort(compareAntigravityQuotaItems)
   return items
 }
 
@@ -3493,7 +3464,7 @@ function getAntigravityQuotaItemsFromSnapshot(key: EndpointAPIKey): AntigravityQ
     })
     .filter((item): item is AntigravityQuotaItem => item !== null)
 
-  items.sort(antigravityQuotaItemSort)
+  items.sort(compareAntigravityQuotaItems)
   return items
 }
 

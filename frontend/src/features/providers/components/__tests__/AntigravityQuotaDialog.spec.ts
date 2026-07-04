@@ -102,12 +102,13 @@ function mount(metadata: UpstreamMetadata) {
 }
 
 describe('AntigravityQuotaDialog', () => {
-  it('renders model display names without losing raw model identifiers', () => {
+  it('renders opaque quota identifiers with concise visible labels', () => {
+    const rawIdentifier = 'RateLimitResetCredit_05cbb6eeeb9c81918e011d8300f9ebfb'
     const { root, unmount } = mount({
       antigravity: {
         quota_by_model: {
-          'RateLimitResetCredit_05cbb6eeeb9c81918e011d8300f9ebfb': {
-            display_name: 'RateLimitResetCredit_05cbb6eeeb9c81918e011d8300f9ebfb',
+          [rawIdentifier]: {
+            display_name: rawIdentifier,
             remaining_fraction: 0.25,
             used_percent: 75,
           },
@@ -116,8 +117,44 @@ describe('AntigravityQuotaDialog', () => {
     })
 
     expect(root.textContent).toContain('Key-1')
-    expect(root.textContent).toContain('RateLimitResetCredit_05cbb6eeeb9c81918e011d8300f9ebfb')
+    expect(root.textContent).not.toContain(rawIdentifier)
     expect(root.textContent).toContain('25.0%')
+
+    unmount()
+  })
+
+  it('orders important Gemini and Claude quota rows before low-priority rows', () => {
+    const { root, unmount } = mount({
+      antigravity: {
+        quota_by_model: {
+          tab_flash_lite_preview: {
+            display_name: 'Tab Flash Lite Preview',
+            remaining_fraction: 0.01,
+            used_percent: 99,
+          },
+          'gemini-3.5-flash-low': {
+            display_name: 'Gemini 3.5 Flash Low',
+            remaining_fraction: 0.8,
+            used_percent: 20,
+          },
+          'claude-opus-4-6-thinking': {
+            display_name: 'Claude Opus 4.6 Thinking',
+            remaining_fraction: 1,
+            used_percent: 0,
+          },
+          chat_20706: {
+            display_name: 'chat_20706',
+            remaining_fraction: 0,
+            used_percent: 100,
+          },
+        },
+      },
+    })
+    const text = root.textContent || ''
+
+    expect(text.indexOf('Claude Opus 4.6 Thinking')).toBeLessThan(text.indexOf('Gemini 3.5 Flash Low'))
+    expect(text.indexOf('Gemini 3.5 Flash Low')).toBeLessThan(text.indexOf('Tab Flash Lite Preview'))
+    expect(text.indexOf('Tab Flash Lite Preview')).toBeLessThan(text.indexOf('chat_20706'))
 
     unmount()
   })

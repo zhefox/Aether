@@ -60,13 +60,6 @@
               >
                 {{ item.label }}
               </div>
-              <div
-                v-if="item.label !== item.model"
-                class="text-[9px] leading-tight text-muted-foreground/55 truncate font-mono"
-                :title="item.model"
-              >
-                {{ item.model }}
-              </div>
             </div>
             <span :class="getQuotaRemainingClass(item.usedPercent)">
               {{ item.remainingPercent.toFixed(1) }}%
@@ -125,6 +118,10 @@ import { testModel } from '@/api/endpoints/providers'
 import type { UpstreamMetadata, QuotaStatusSnapshot, QuotaWindowSnapshot } from '@/api/endpoints/types'
 import { useToast } from '@/composables/useToast'
 import { parseApiError } from '@/utils/errorParser'
+import {
+  compareAntigravityQuotaItems,
+  resolveAntigravityQuotaLabel,
+} from '@/features/providers/utils/antigravityQuota'
 
 const props = defineProps<{
   open: boolean
@@ -194,32 +191,6 @@ function secondsUntilUnixReset(resetAt: unknown): number | null {
   return Math.max(Math.floor(numericResetAt - now), 0)
 }
 
-function sortQuotaItems(a: QuotaItem, b: QuotaItem): number {
-  return (a.remainingPercent - b.remainingPercent)
-    || ((a.resetSeconds ?? Number.POSITIVE_INFINITY) - (b.resetSeconds ?? Number.POSITIVE_INFINITY))
-    || a.label.localeCompare(b.label)
-    || a.model.localeCompare(b.model)
-}
-
-function isOpaqueAntigravityQuotaIdentifier(value: string): boolean {
-  return value.trim().startsWith('RateLimitResetCredit_')
-}
-
-function resolveQuotaLabel(
-  model: string,
-  rawLabel: unknown,
-  opaqueDisplayIndex: { value: number },
-): string {
-  const candidate = String(rawLabel || '').trim()
-  if (candidate && !isOpaqueAntigravityQuotaIdentifier(candidate)) return candidate
-  if (isOpaqueAntigravityQuotaIdentifier(model) || (candidate && isOpaqueAntigravityQuotaIdentifier(candidate))) {
-    const label = `Key-${opaqueDisplayIndex.value}`
-    opaqueDisplayIndex.value += 1
-    return label
-  }
-  return candidate || model
-}
-
 function buildItemsFromQuotaSnapshot(quota: QuotaStatusSnapshot | null | undefined): QuotaItem[] {
   if (!quota) return []
 
@@ -252,7 +223,7 @@ function buildItemsFromQuotaSnapshot(quota: QuotaStatusSnapshot | null | undefin
 
       return {
         model,
-        label: resolveQuotaLabel(model, window.label || window.model, opaqueDisplayIndex),
+        label: resolveAntigravityQuotaLabel(model, window.label || window.model, opaqueDisplayIndex),
         usedPercent,
         remainingPercent,
         resetSeconds: getQuotaWindowLiveResetSeconds(quota, window),
@@ -260,7 +231,7 @@ function buildItemsFromQuotaSnapshot(quota: QuotaStatusSnapshot | null | undefin
     })
     .filter((item): item is QuotaItem => item !== null)
 
-  items.sort(sortQuotaItems)
+  items.sort(compareAntigravityQuotaItems)
   return items
 }
 
@@ -305,14 +276,14 @@ const items = computed<QuotaItem[]>(() => {
 
     result.push({
       model,
-      label: resolveQuotaLabel(model, info['display_name'], opaqueDisplayIndex),
+      label: resolveAntigravityQuotaLabel(model, info['display_name'], opaqueDisplayIndex),
       usedPercent,
       remainingPercent,
       resetSeconds,
     })
   }
 
-  result.sort(sortQuotaItems)
+  result.sort(compareAntigravityQuotaItems)
   return result
 })
 
