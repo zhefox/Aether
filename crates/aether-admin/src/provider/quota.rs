@@ -601,9 +601,9 @@ fn codex_find_spark_rate_limit(
         .and_then(serde_json::Value::as_object)
 }
 
-fn codex_reset_credits_container<'a>(
-    root: &'a serde_json::Map<String, serde_json::Value>,
-) -> Option<&'a serde_json::Map<String, serde_json::Value>> {
+fn codex_reset_credits_container(
+    root: &serde_json::Map<String, serde_json::Value>,
+) -> Option<&serde_json::Map<String, serde_json::Value>> {
     [
         "rate_limit_reset_credits",
         "rateLimitResetCredits",
@@ -874,11 +874,7 @@ pub fn normalize_codex_reset_credit_consume_outcome(
         .iter()
         .find_map(|key| coerce_json_string(object.get(*key)));
     if let Some(raw) = raw {
-        let normalized = raw
-            .trim()
-            .replace('-', "_")
-            .replace(' ', "_")
-            .to_ascii_lowercase();
+        let normalized = raw.trim().replace(['-', ' '], "_").to_ascii_lowercase();
         return match normalized.as_str() {
             "reset" | "success" | "redeemed" => Some("reset".to_string()),
             "alreadyredeemed" | "already_redeemed" => Some("already_redeemed".to_string()),
