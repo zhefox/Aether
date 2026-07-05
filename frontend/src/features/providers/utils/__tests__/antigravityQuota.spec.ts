@@ -15,35 +15,49 @@ describe('antigravityQuota', () => {
         'Gemini 3.5 Flash (High)',
         opaqueDisplayIndex,
       ),
-    ).toBe('Gemini 3.5 Flash High')
+    ).toBe('Gemini 3.5 Flash (High)')
     expect(
       resolveAntigravityQuotaLabel(
         'gemini-3.5-flash-low',
         'Gemini 3.5 Flash (Medium)',
         opaqueDisplayIndex,
       ),
-    ).toBe('Gemini 3.5 Flash Medium')
+    ).toBe('Gemini 3.5 Flash (Medium)')
     expect(
       resolveAntigravityQuotaLabel(
         'gemini-3.5-flash-extra-low',
         'Gemini 3.5 Flash (Low)',
         opaqueDisplayIndex,
       ),
-    ).toBe('Gemini 3.5 Flash Low')
+    ).toBe('Gemini 3.5 Flash (Low)')
+    expect(
+      resolveAntigravityQuotaLabel(
+        'gemini-pro-agent',
+        'gemini-pro-agent',
+        opaqueDisplayIndex,
+      ),
+    ).toBe('Gemini 3.1 Pro (High)')
+    expect(
+      resolveAntigravityQuotaLabel(
+        'gemini-3.1-pro-high',
+        'gemini-3.1-pro-high',
+        opaqueDisplayIndex,
+      ),
+    ).toBe('Gemini 3.1 Pro (High)')
     expect(
       resolveAntigravityQuotaLabel(
         'gemini-2.5-flash',
         'Gemini 3.1 Flash Lite',
         opaqueDisplayIndex,
       ),
-    ).toBe('Gemini 2.5 Flash')
+    ).toBe('Gemini 3.1 Flash Lite')
     expect(
       resolveAntigravityQuotaLabel(
         'claude-sonnet-4-6',
         'Claude Sonnet 4.6 (Thinking)',
         opaqueDisplayIndex,
       ),
-    ).toBe('Claude Sonnet 4.6')
+    ).toBe('Claude Sonnet 4.6 (Thinking)')
     expect(
       resolveAntigravityQuotaLabel(
         'RateLimitResetCredit_05cbb6eeeb9c81918e011d8300f9ebfb',
@@ -63,20 +77,26 @@ describe('antigravityQuota', () => {
       },
       {
         model: 'gemini-3.5-flash-extra-low',
-        label: 'Gemini 3.5 Flash Low',
+        label: 'Gemini 3.5 Flash (Low)',
         remainingPercent: 95,
         resetSeconds: null,
       },
       {
         model: 'gemini-3.5-flash-low',
-        label: 'Gemini 3.5 Flash Medium',
+        label: 'Gemini 3.5 Flash (Medium)',
         remainingPercent: 90,
         resetSeconds: null,
       },
       {
         model: 'gemini-3-flash-agent',
-        label: 'Gemini 3.5 Flash High',
+        label: 'Gemini 3.5 Flash (High)',
         remainingPercent: 80,
+        resetSeconds: null,
+      },
+      {
+        model: 'gemini-pro-agent',
+        label: 'Gemini 3.1 Pro (High)',
+        remainingPercent: 70,
         resetSeconds: null,
       },
       {
@@ -87,23 +107,24 @@ describe('antigravityQuota', () => {
       },
       {
         model: 'claude-opus-4-6-thinking',
-        label: 'Claude Opus 4.6 Thinking',
+        label: 'Claude Opus 4.6 (Thinking)',
         remainingPercent: 100,
         resetSeconds: null,
       },
       {
         model: 'gemini-2.5-flash-lite',
-        label: 'Gemini 2.5 Flash Lite',
+        label: 'Gemini 3.1 Flash Lite',
         remainingPercent: 5,
         resetSeconds: 5,
       },
     ].sort(compareAntigravityQuotaItems)
 
     expect(items.map(item => item.model)).toEqual([
-      'claude-opus-4-6-thinking',
+      'gemini-pro-agent',
       'gemini-3-flash-agent',
       'gemini-3.5-flash-low',
       'gemini-3.5-flash-extra-low',
+      'claude-opus-4-6-thinking',
       'gemini-2.5-flash-lite',
       'tab_flash_lite_preview',
       'chat_20706',

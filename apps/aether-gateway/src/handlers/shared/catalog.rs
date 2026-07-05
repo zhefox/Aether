@@ -579,22 +579,21 @@ fn model_quota_window_snapshot(
 
 fn canonical_antigravity_model_label(model_name: &str) -> Option<&'static str> {
     match model_name.trim() {
-        "claude-opus-4-6-thinking" => Some("Claude Opus 4.6 Thinking"),
-        "claude-sonnet-4-6" => Some("Claude Sonnet 4.6"),
-        "gemini-3-flash-agent" => Some("Gemini 3.5 Flash High"),
-        "gemini-3.5-flash-low" => Some("Gemini 3.5 Flash Medium"),
-        "gemini-3.5-flash-extra-low" => Some("Gemini 3.5 Flash Low"),
-        "gemini-3.1-pro-high" => Some("Gemini 3.1 Pro High"),
-        "gemini-3.1-pro-low" => Some("Gemini 3.1 Pro Low"),
-        "gemini-pro-agent" => Some("Gemini 3.1 Pro High"),
+        "claude-opus-4-6-thinking" => Some("Claude Opus 4.6 (Thinking)"),
+        "claude-sonnet-4-6" | "claude-sonnet-4-6-thinking" => Some("Claude Sonnet 4.6 (Thinking)"),
+        "gemini-3-flash-agent" => Some("Gemini 3.5 Flash (High)"),
+        "gemini-3.5-flash-low" => Some("Gemini 3.5 Flash (Medium)"),
+        "gemini-3.5-flash-extra-low" => Some("Gemini 3.5 Flash (Low)"),
+        "gemini-3.1-pro-high" | "gemini-pro-agent" => Some("Gemini 3.1 Pro (High)"),
+        "gemini-3.1-pro-low" => Some("Gemini 3.1 Pro (Low)"),
         "gemini-3.1-flash-image" => Some("Gemini 3.1 Flash Image"),
         "gemini-3.1-flash-lite" => Some("Gemini 3.1 Flash Lite"),
         "gemini-3-flash" => Some("Gemini 3 Flash"),
         "gemini-2.5-pro" => Some("Gemini 2.5 Pro"),
-        "gemini-2.5-flash-thinking" => Some("Gemini 2.5 Flash Thinking"),
-        "gemini-2.5-flash" => Some("Gemini 2.5 Flash"),
-        "gemini-2.5-flash-lite" => Some("Gemini 2.5 Flash Lite"),
-        "gpt-oss-120b-medium" => Some("GPT-OSS 120B Medium"),
+        "gemini-2.5-flash-thinking" | "gemini-2.5-flash" | "gemini-2.5-flash-lite" => {
+            Some("Gemini 3.1 Flash Lite")
+        }
+        "gpt-oss-120b-medium" => Some("GPT-OSS 120B (Medium)"),
         "tab_flash_lite_preview" => Some("Tab Flash Lite Preview"),
         "tab_jump_flash_lite_preview" => Some("Tab Jump Flash Lite Preview"),
         "models/proactive-observer" => Some("Proactive Observer"),
@@ -3805,23 +3804,23 @@ mod tests {
 
         assert_eq!(
             label_for_model("gemini-3.5-flash-extra-low"),
-            Some(json!("Gemini 3.5 Flash Low"))
+            Some(json!("Gemini 3.5 Flash (Low)"))
         );
         assert_eq!(
             label_for_model("gemini-3.5-flash-low"),
-            Some(json!("Gemini 3.5 Flash Medium"))
+            Some(json!("Gemini 3.5 Flash (Medium)"))
         );
         assert_eq!(
             label_for_model("gemini-3-flash-agent"),
-            Some(json!("Gemini 3.5 Flash High"))
+            Some(json!("Gemini 3.5 Flash (High)"))
         );
         assert_eq!(
             label_for_model("gemini-2.5-flash"),
-            Some(json!("Gemini 2.5 Flash"))
+            Some(json!("Gemini 3.1 Flash Lite"))
         );
         assert_eq!(
             label_for_model("claude-sonnet-4-6"),
-            Some(json!("Claude Sonnet 4.6"))
+            Some(json!("Claude Sonnet 4.6 (Thinking)"))
         );
     }
 

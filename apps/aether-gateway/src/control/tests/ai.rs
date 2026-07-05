@@ -319,6 +319,10 @@ fn classifies_antigravity_v1internal_control_plane_routes() {
     for (path, route_kind) in [
         ("/v1internal:loadCodeAssist", "load_code_assist"),
         ("/v1internal:fetchAvailableModels", "fetch_available_models"),
+        (
+            "/v1internal:retrieveUserQuotaSummary",
+            "retrieve_user_quota_summary",
+        ),
         ("/v1internal:fetchUserInfo", "fetch_user_info"),
         ("/v1internal:fetchAdminControls", "fetch_admin_controls"),
         ("/v1internal:setUserSettings", "set_user_settings"),
@@ -327,6 +331,7 @@ fn classifies_antigravity_v1internal_control_plane_routes() {
             "/v1internal:recordCodeAssistMetrics",
             "record_code_assist_metrics",
         ),
+        ("/v1internal:writeTrajectoryAcls", "write_trajectory_acls"),
     ] {
         let uri: Uri = path.parse().expect("uri should parse");
         let decision = classify_control_route(&http::Method::POST, &uri, &headers)

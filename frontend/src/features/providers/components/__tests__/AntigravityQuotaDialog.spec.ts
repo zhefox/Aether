@@ -137,13 +137,18 @@ describe('AntigravityQuotaDialog', () => {
             remaining_fraction: 0.9,
             used_percent: 10,
           },
+          'gemini-pro-agent': {
+            display_name: 'gemini-pro-agent',
+            remaining_fraction: 0.95,
+            used_percent: 5,
+          },
           'gemini-3.5-flash-low': {
             display_name: 'Gemini 3.5 Flash (Medium)',
             remaining_fraction: 0.8,
             used_percent: 20,
           },
           'claude-opus-4-6-thinking': {
-            display_name: 'Claude Opus 4.6 Thinking',
+            display_name: 'Claude Opus 4.6 (Thinking)',
             remaining_fraction: 1,
             used_percent: 0,
           },
@@ -157,9 +162,12 @@ describe('AntigravityQuotaDialog', () => {
     })
     const text = root.textContent || ''
 
-    expect(text.indexOf('Claude Opus 4.6 Thinking')).toBeLessThan(text.indexOf('Gemini 3.5 Flash High'))
-    expect(text.indexOf('Gemini 3.5 Flash High')).toBeLessThan(text.indexOf('Gemini 3.5 Flash Medium'))
-    expect(text.indexOf('Gemini 3.5 Flash Medium')).toBeLessThan(text.indexOf('Tab Flash Lite Preview'))
+    expect(text).not.toContain('gemini-pro-agent')
+    expect(text).not.toContain('claude-opus-4-6-thinking')
+    expect(text.indexOf('Gemini 3.1 Pro (High)')).toBeLessThan(text.indexOf('Gemini 3.5 Flash (High)'))
+    expect(text.indexOf('Gemini 3.5 Flash (High)')).toBeLessThan(text.indexOf('Gemini 3.5 Flash (Medium)'))
+    expect(text.indexOf('Gemini 3.5 Flash (Medium)')).toBeLessThan(text.indexOf('Claude Opus 4.6 (Thinking)'))
+    expect(text.indexOf('Claude Opus 4.6 (Thinking)')).toBeLessThan(text.indexOf('Tab Flash Lite Preview'))
     expect(text.indexOf('Tab Flash Lite Preview')).toBeLessThan(text.indexOf('chat_20706'))
 
     unmount()
