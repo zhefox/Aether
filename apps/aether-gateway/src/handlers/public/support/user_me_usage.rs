@@ -220,7 +220,7 @@ fn users_me_usage_api_format_defaults_to_non_stream(item: &StoredRequestUsageAud
     let Some(value) = api_format else {
         return false;
     };
-    aether_ai_formats::api_format_defaults_to_non_stream(value)
+    crate::ai_serving::api_format_defaults_to_non_stream(value)
 }
 
 fn users_me_usage_request_body_implies_default_non_stream(item: &StoredRequestUsageAudit) -> bool {

@@ -97,7 +97,7 @@ pub(crate) fn local_failover_policy_from_transport(
     LocalFailoverPolicy {
         max_retries,
         retry_client_errors_by_default:
-            aether_ai_formats::api_format_defaults_to_client_error_failover(
+            crate::ai_serving::api_format_defaults_to_client_error_failover(
                 &transport.endpoint.api_format,
             ),
         stop_cyber_policy_errors: codex_cyber_flag_passthrough_enabled(

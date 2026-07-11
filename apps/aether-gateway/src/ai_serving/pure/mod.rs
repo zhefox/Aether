@@ -162,4 +162,8 @@ pub(crate) use aether_ai_formats::api::{
     OPENAI_VIDEO_CREATE_SYNC_PLAN_KIND, OPENAI_VIDEO_DELETE_SYNC_PLAN_KIND,
     OPENAI_VIDEO_REMIX_SYNC_PLAN_KIND,
 };
-pub(crate) use aether_ai_formats::{is_embedding_api_format, is_rerank_api_format};
+pub(crate) use aether_ai_formats::{
+    api_format_defaults_to_client_error_failover, api_format_defaults_to_non_stream,
+    api_format_permission_covers, intersect_api_format_allowed_lists, is_embedding_api_format,
+    is_rerank_api_format,
+};

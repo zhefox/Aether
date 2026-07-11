@@ -101,7 +101,7 @@ fn provider_query_model_mapping_matches_endpoint(
 ) -> bool {
     let api_format_matches = mapping.api_formats.as_ref().is_none_or(|api_formats| {
         api_formats.iter().any(|value| {
-            aether_ai_formats::api_format_permission_covers(value, &endpoint.api_format)
+            crate::ai_serving::api_format_permission_covers(value, &endpoint.api_format)
         })
     });
     if !api_format_matches {

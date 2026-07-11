@@ -38,7 +38,7 @@ pub(crate) fn provider_catalog_key_supports_format(
     }
     formats
         .iter()
-        .any(|candidate| aether_ai_formats::api_format_permission_covers(candidate, api_format))
+        .any(|candidate| crate::ai_serving::api_format_permission_covers(candidate, api_format))
 }
 
 pub(crate) fn decrypt_catalog_secret_with_fallbacks(

@@ -2107,7 +2107,7 @@ fn intersect_api_format_list_policies(
         (None, None) => None,
         (Some(values), None) | (None, Some(values)) => Some(values),
         (Some(left_values), Some(right_values)) => Some(
-            aether_ai_formats::intersect_api_format_allowed_lists(&left_values, &right_values),
+            crate::ai_serving::intersect_api_format_allowed_lists(&left_values, &right_values),
         ),
     }
 }
