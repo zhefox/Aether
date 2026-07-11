@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use aether_ai_formats::CODEX_RESPONSES_LITE_HEADER;
 use aether_ai_serving::{run_ai_authenticated_decision_input, AiAuthenticatedDecisionInputPort};
 use aether_routing_core::{
     rank_vector_for_candidate, CandidateKind, ResolvedRoutingPolicy, RoutingCandidateFacts,
@@ -17,7 +16,7 @@ use tracing::warn;
 use crate::ai_serving::planner::common::extract_standard_requested_model;
 use crate::ai_serving::{
     ExecutionRuntimeAuthContext, GatewayAuthApiKeySnapshot, GatewayProviderTransportSnapshot,
-    PlannerAppState,
+    PlannerAppState, CODEX_RESPONSES_LITE_HEADER,
 };
 use crate::client_session_affinity::client_session_affinity_from_request;
 use crate::clock::current_unix_secs;
