@@ -33,6 +33,31 @@ pub fn validate_openai_prompt_cache_request(
     )
 }
 
+pub fn resolve_openai_prompt_cache_ttl_minutes(
+    provider_api_format: &str,
+    provider_model: &str,
+    source_model: &str,
+    body: &Value,
+) -> Option<i64> {
+    OpenAiPromptCacheApi::parse(provider_api_format)?;
+    let request = body.as_object()?;
+    let explicit_ttl = request
+        .get("prompt_cache_options")
+        .and_then(Value::as_object)
+        .and_then(|options| options.get("ttl"))
+        .and_then(Value::as_str);
+    if explicit_ttl == Some("30m") {
+        return Some(30);
+    }
+
+    let capability_model =
+        crate::formats::shared::model_directives::openai_model_capability_identity(
+            provider_model,
+            source_model,
+        );
+    crate::openai_model_supports_prompt_cache_options(&capability_model).then_some(30)
+}
+
 pub(crate) fn validate_openai_prompt_cache_request_with_source_model(
     source_api_format: &str,
     provider_model: &str,
@@ -362,7 +387,63 @@ fn unsupported_for_model(field: &str, reason: &str) -> OpenAiPromptCacheContract
 mod tests {
     use serde_json::json;
 
-    use super::{validate_openai_prompt_cache_request, OpenAiPromptCacheViolationKind};
+    use super::{
+        resolve_openai_prompt_cache_ttl_minutes, validate_openai_prompt_cache_request,
+        OpenAiPromptCacheViolationKind,
+    };
+
+    #[test]
+    fn resolves_effective_prompt_cache_ttl_from_current_openai_contract() {
+        for body in [
+            json!({"model": "client-alias"}),
+            json!({
+                "model": "client-alias",
+                "prompt_cache_options": {"mode": "implicit"}
+            }),
+            json!({
+                "model": "client-alias",
+                "prompt_cache_options": {"mode": "explicit", "ttl": "30m"}
+            }),
+        ] {
+            assert_eq!(
+                resolve_openai_prompt_cache_ttl_minutes(
+                    "openai:responses",
+                    "gpt-5.6-sol",
+                    "client-alias",
+                    &body,
+                ),
+                Some(30)
+            );
+        }
+
+        assert_eq!(
+            resolve_openai_prompt_cache_ttl_minutes(
+                "openai:chat",
+                "deployment-alias",
+                "gpt-5.6-terra",
+                &json!({"model": "gpt-5.6-terra"}),
+            ),
+            Some(30)
+        );
+        assert_eq!(
+            resolve_openai_prompt_cache_ttl_minutes(
+                "openai:chat",
+                "gpt-5.5",
+                "gpt-5.6-terra",
+                &json!({"model": "gpt-5.6-terra"}),
+            ),
+            None
+        );
+        assert_eq!(
+            resolve_openai_prompt_cache_ttl_minutes(
+                "claude:messages",
+                "gpt-5.6-sol",
+                "gpt-5.6-sol",
+                &json!({"model": "gpt-5.6-sol"}),
+            ),
+            None
+        );
+    }
 
     #[test]
     fn gpt_5_6_accepts_current_prompt_cache_options_and_breakpoints() {

@@ -22,6 +22,7 @@ pub use formats::matrix::{
     sync_chat_response_conversion_kind, sync_cli_response_conversion_kind, RequestConversionKind,
     SyncChatResponseConversionKind, SyncCliResponseConversionKind,
 };
+pub use formats::openai::prompt_cache::resolve_openai_prompt_cache_ttl_minutes;
 pub use formats::openai::prompt_cache::{
     validate_openai_prompt_cache_request, OpenAiPromptCacheContractViolation,
     OpenAiPromptCacheViolationKind,

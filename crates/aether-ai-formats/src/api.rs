@@ -56,6 +56,7 @@ pub use crate::formats::openai::image::stream::{
     maybe_build_openai_image_sync_finalize_product, OpenAiImageStreamState,
     OpenAiImageSyncFinalizeProduct,
 };
+pub use crate::formats::openai::prompt_cache::resolve_openai_prompt_cache_ttl_minutes;
 pub use crate::formats::openai::shared::{
     copy_request_number_field, copy_request_number_field_as,
     map_openai_reasoning_effort_to_claude_output, map_openai_reasoning_effort_to_gemini_budget,

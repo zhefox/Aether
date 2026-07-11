@@ -191,6 +191,13 @@ async fn estimate_execution_plan_cost_upper_bound_usd(
         ));
     let model_id = report_context_string_field(report_context, "model_id");
     let global_model_name = report_context_string_field(report_context, "global_model_name");
+    let cache_ttl_minutes =
+        aether_data_contracts::repository::usage::resolve_provider_cache_ttl_minutes(
+            Some(&api_format),
+            plan.model_name.as_deref(),
+            global_model_name,
+            Some(body_json),
+        );
     if model_id.is_none() && global_model_name.is_none() {
         return Ok(None);
     }
@@ -202,6 +209,7 @@ async fn estimate_execution_plan_cost_upper_bound_usd(
         input_tokens,
         max_output_tokens,
         requested_processing_tier.as_deref(),
+        cache_ttl_minutes,
     );
     let ttl = state.frontdoor_runtime_guards.auth_capacity_cache_ttl;
     if ttl.is_zero() {
@@ -215,6 +223,7 @@ async fn estimate_execution_plan_cost_upper_bound_usd(
             input_tokens,
             max_output_tokens,
             requested_processing_tier.as_deref(),
+            cache_ttl_minutes,
         )
         .await;
     }
@@ -231,6 +240,7 @@ async fn estimate_execution_plan_cost_upper_bound_usd(
                 input_tokens,
                 max_output_tokens,
                 requested_processing_tier.as_deref(),
+                cache_ttl_minutes,
             )
             .await
         })
@@ -248,6 +258,7 @@ async fn calculate_execution_plan_cost_upper_bound(
     input_tokens: i64,
     max_output_tokens: Option<i64>,
     requested_processing_tier: Option<&str>,
+    cache_ttl_minutes: Option<i64>,
 ) -> Result<Option<f64>, GatewayError> {
     let context = match model_id {
         Some(model_id) => state
@@ -272,6 +283,7 @@ async fn calculate_execution_plan_cost_upper_bound(
         aether_billing::BillingAuthorizationEstimateInput::new(task_type, input_tokens);
     estimate.api_format = Some(api_format.to_string());
     estimate.requested_processing_tier = requested_processing_tier.map(ToOwned::to_owned);
+    estimate.cache_ttl_minutes = cache_ttl_minutes;
     estimate.max_output_tokens = max_output_tokens;
     aether_billing::BillingService::new()
         .estimate_authorization_cost_upper_bound(
@@ -289,9 +301,10 @@ fn execution_plan_cost_upper_bound_cache_key(
     input_tokens: i64,
     max_output_tokens: Option<i64>,
     requested_processing_tier: Option<&str>,
+    cache_ttl_minutes: Option<i64>,
 ) -> String {
     format!(
-        "{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}",
+        "{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}\x1f{}",
         plan.provider_id,
         plan.key_id,
         model_id.unwrap_or(""),
@@ -302,6 +315,9 @@ fn execution_plan_cost_upper_bound_cache_key(
             .map(|value| value.to_string())
             .unwrap_or_else(|| "none".to_string()),
         requested_processing_tier.unwrap_or("standard"),
+        cache_ttl_minutes
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "none".to_string()),
     )
 }
 
@@ -554,9 +570,9 @@ mod tests {
     use serde_json::json;
 
     use super::{
-        execution_plan_balance_capacity_rejection, max_output_tokens_from_request,
-        openai_request_input_is_self_contained, output_choice_count_upper_bound,
-        request_model_local_rejection, GatewayLocalAuthRejection,
+        execution_plan_balance_capacity_rejection, execution_plan_cost_upper_bound_cache_key,
+        max_output_tokens_from_request, openai_request_input_is_self_contained,
+        output_choice_count_upper_bound, request_model_local_rejection, GatewayLocalAuthRejection,
     };
     use crate::control::{GatewayControlAuthContext, GatewayControlDecision};
     use crate::data::GatewayDataState;
@@ -1421,6 +1437,33 @@ mod tests {
             output_choice_count_upper_bound("openai:responses", &body),
             1
         );
+    }
+
+    #[test]
+    fn authorization_cache_key_includes_effective_cache_ttl() {
+        let plan = execution_plan(json!({"model": "gpt-5.6-sol"}), "openai:responses");
+        let without_ttl = execution_plan_cost_upper_bound_cache_key(
+            &plan,
+            Some("model-1"),
+            Some("gpt-5.6-sol"),
+            "openai:responses",
+            100,
+            Some(10),
+            Some("priority"),
+            None,
+        );
+        let with_ttl = execution_plan_cost_upper_bound_cache_key(
+            &plan,
+            Some("model-1"),
+            Some("gpt-5.6-sol"),
+            "openai:responses",
+            100,
+            Some(10),
+            Some("priority"),
+            Some(30),
+        );
+
+        assert_ne!(without_ttl, with_ttl);
     }
 
     #[test]

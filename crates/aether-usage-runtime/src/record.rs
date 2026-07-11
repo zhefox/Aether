@@ -40,6 +40,11 @@ pub fn build_upsert_usage_record_from_event(
     let mut data = event.data.clone();
     data.request_metadata = attach_provider_request_body_metadata(
         data.request_metadata,
+        data.endpoint_api_format
+            .as_deref()
+            .or(data.api_format.as_deref()),
+        data.target_model.as_deref().or(Some(data.model.as_str())),
+        Some(data.model.as_str()),
         data.provider_request_body.as_ref(),
     );
     let now_unix_secs = event.timestamp_ms / 1_000;

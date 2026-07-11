@@ -691,8 +691,13 @@ fn build_terminal_usage_event_from_seed_impl(
     } else {
         merge_usage_request_metadata(request_metadata, audit_payload)
     };
-    let request_metadata =
-        attach_provider_request_body_metadata(request_metadata, provider_request.as_ref());
+    let request_metadata = attach_provider_request_body_metadata(
+        request_metadata,
+        Some(provider_contract.as_str()),
+        target_model.as_deref().or(Some(model.as_str())),
+        Some(model.as_str()),
+        provider_request.as_ref(),
+    );
 
     let mut data = UsageEventData {
         user_id,

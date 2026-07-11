@@ -51,6 +51,15 @@ impl BillingPricingResolution {
             .as_deref()
             .is_some_and(processing_tier_is_standard)
     }
+
+    pub fn bills_requested_processing_tier(&self) -> bool {
+        let requested = self
+            .requested_processing_tier
+            .as_deref()
+            .map(canonical_processing_tier)
+            .unwrap_or_else(|| "standard".to_string());
+        self.billing_processing_tier.as_deref() == Some(requested.as_str())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -571,6 +580,8 @@ pub struct BillingAuthorizationEstimateInput {
     pub task_type: String,
     pub api_format: Option<String>,
     pub requested_processing_tier: Option<String>,
+    #[serde(default)]
+    pub cache_ttl_minutes: Option<i64>,
     pub input_tokens: i64,
     pub max_output_tokens: Option<i64>,
 }
@@ -581,6 +592,7 @@ impl BillingAuthorizationEstimateInput {
             task_type: task_type.into(),
             api_format: None,
             requested_processing_tier: None,
+            cache_ttl_minutes: None,
             input_tokens: input_tokens.max(0),
             max_output_tokens: None,
         }

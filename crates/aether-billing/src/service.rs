@@ -79,7 +79,9 @@ impl BillingService {
             actual_processing_tier: None,
             input_tokens,
             output_tokens,
-            cache_ttl_minutes: pricing.provider_api_key_cache_ttl_minutes,
+            cache_ttl_minutes: estimate
+                .cache_ttl_minutes
+                .or(pricing.provider_api_key_cache_ttl_minutes),
             ..BillingUsageInput::new(estimate.task_type.clone())
         };
         let mut scenarios = vec![base_input.clone()];
@@ -92,17 +94,19 @@ impl BillingService {
             cache_creation.cache_creation_tokens = input_tokens;
             scenarios.push(cache_creation);
 
-            let mut cache_creation_5m = base_input.clone();
-            cache_creation_5m.cache_creation_tokens = input_tokens;
-            cache_creation_5m.cache_creation_ephemeral_5m_tokens = input_tokens;
-            cache_creation_5m.cache_ttl_minutes = Some(5);
-            scenarios.push(cache_creation_5m);
+            if estimate.cache_ttl_minutes.is_none() {
+                let mut cache_creation_5m = base_input.clone();
+                cache_creation_5m.cache_creation_tokens = input_tokens;
+                cache_creation_5m.cache_creation_ephemeral_5m_tokens = input_tokens;
+                cache_creation_5m.cache_ttl_minutes = Some(5);
+                scenarios.push(cache_creation_5m);
 
-            let mut cache_creation_1h = base_input.clone();
-            cache_creation_1h.cache_creation_tokens = input_tokens;
-            cache_creation_1h.cache_creation_ephemeral_1h_tokens = input_tokens;
-            cache_creation_1h.cache_ttl_minutes = Some(60);
-            scenarios.push(cache_creation_1h);
+                let mut cache_creation_1h = base_input.clone();
+                cache_creation_1h.cache_creation_tokens = input_tokens;
+                cache_creation_1h.cache_creation_ephemeral_1h_tokens = input_tokens;
+                cache_creation_1h.cache_ttl_minutes = Some(60);
+                scenarios.push(cache_creation_1h);
+            }
 
             let mut cache_read = base_input;
             cache_read.cache_read_tokens = input_tokens;
@@ -110,7 +114,8 @@ impl BillingService {
         }
 
         let mut upper_bound = 0.0_f64;
-        for pricing_resolution in pricing_resolutions {
+        'pricing_catalogs: for pricing_resolution in pricing_resolutions {
+            let is_requested_catalog = pricing_resolution.bills_requested_processing_tier();
             for scenario in &scenarios {
                 let total_input_context = normalize_total_input_context_for_cache_hit_rate(
                     scenario.api_format.as_deref(),
@@ -129,6 +134,11 @@ impl BillingService {
                 let selected =
                     self.calculate_with_resolution(pricing, scenario, pricing_resolution.clone())?;
                 if !billing_computation_is_bounded(&selected) {
+                    if !is_requested_catalog
+                        && billing_computation_is_outside_catalog_context(&selected)
+                    {
+                        continue 'pricing_catalogs;
+                    }
                     return Ok(None);
                 }
 
@@ -298,6 +308,11 @@ fn billing_computation_is_bounded(computation: &BillingComputation) -> bool {
     computation.cost_result.status == BillingSnapshotStatus::Complete
         && computation.actual_total_cost.is_finite()
         && computation.actual_total_cost >= 0.0
+}
+
+fn billing_computation_is_outside_catalog_context(computation: &BillingComputation) -> bool {
+    computation.cost_result.status == BillingSnapshotStatus::NoRule
+        && computation.cost_result.snapshot.missing_required == ["input_context_tier"]
 }
 
 fn authorization_pricing_candidates(
@@ -1173,6 +1188,129 @@ mod tests {
         assert_eq!(
             unknown.cost_result.snapshot.missing_required,
             vec!["processing_tier_catalog"]
+        );
+    }
+
+    #[test]
+    fn processing_catalog_boundaries_match_context_and_priority_contracts() {
+        let cases = [
+            (
+                "default",
+                272_000,
+                BillingSnapshotStatus::Complete,
+                Some(5.0),
+            ),
+            (
+                "default",
+                272_001,
+                BillingSnapshotStatus::Complete,
+                Some(10.0),
+            ),
+            ("flex", 272_000, BillingSnapshotStatus::Complete, Some(2.5)),
+            ("flex", 272_001, BillingSnapshotStatus::Complete, Some(5.0)),
+            (
+                "priority",
+                272_000,
+                BillingSnapshotStatus::Complete,
+                Some(10.0),
+            ),
+            ("priority", 272_001, BillingSnapshotStatus::NoRule, None),
+        ];
+
+        for (actual, input_tokens, status, input_price) in cases {
+            let result = BillingService::new()
+                .calculate(
+                    &processing_pricing(),
+                    &processing_usage(Some(actual), Some(actual), input_tokens),
+                )
+                .expect("processing boundary should resolve");
+            assert_eq!(
+                result.cost_result.status, status,
+                "{actual} at {input_tokens}"
+            );
+            if let Some(input_price) = input_price {
+                assert_eq!(
+                    result.cost_result.snapshot.resolved_variables["input_price_per_1m"],
+                    json!(input_price),
+                    "{actual} at {input_tokens}"
+                );
+            } else {
+                assert_eq!(
+                    result.cost_result.snapshot.missing_required,
+                    vec!["input_context_tier"]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn authorization_estimate_uses_known_request_cache_ttl() {
+        let pricing = BillingModelPricingSnapshot {
+            provider_api_key_rate_multipliers: None,
+            default_price_per_request: None,
+            default_tiered_pricing: Some(json!({
+                "tiers": [{
+                    "up_to": null,
+                    "input_price_per_1m": 1.0,
+                    "output_price_per_1m": 0.0,
+                    "cache_creation_price_per_1m": 1.25,
+                    "cache_read_price_per_1m": 0.1,
+                    "cache_ttl_pricing": [{
+                        "ttl_minutes": 60,
+                        "cache_creation_price_per_1m": 100.0,
+                        "cache_read_price_per_1m": 100.0
+                    }]
+                }]
+            })),
+            ..pricing()
+        };
+        let service = BillingService::new();
+        let mut estimate = BillingAuthorizationEstimateInput::new("chat", 1_000_000);
+        estimate.api_format = Some("openai:responses".to_string());
+        estimate.max_output_tokens = Some(0);
+        estimate.cache_ttl_minutes = Some(30);
+
+        assert_eq!(
+            service
+                .estimate_authorization_cost_upper_bound(&pricing, &estimate)
+                .expect("known TTL estimate should calculate"),
+            Some(1.25)
+        );
+
+        estimate.cache_ttl_minutes = None;
+        assert_eq!(
+            service
+                .estimate_authorization_cost_upper_bound(&pricing, &estimate)
+                .expect("unknown TTL estimate should calculate"),
+            Some(100.0)
+        );
+    }
+
+    #[test]
+    fn authorization_estimate_uses_only_processing_catalogs_eligible_for_context() {
+        let service = BillingService::new();
+        let mut estimate = BillingAuthorizationEstimateInput::new("chat", 300_000);
+        estimate.api_format = Some("openai:responses".to_string());
+        estimate.max_output_tokens = Some(0);
+        estimate.cache_ttl_minutes = Some(30);
+
+        for requested_processing_tier in [None, Some("standard"), Some("flex")] {
+            estimate.requested_processing_tier = requested_processing_tier.map(ToOwned::to_owned);
+            assert_eq!(
+                service
+                    .estimate_authorization_cost_upper_bound(&processing_pricing(), &estimate)
+                    .expect("eligible processing catalogs should calculate"),
+                Some(3.75),
+                "requested tier: {requested_processing_tier:?}"
+            );
+        }
+
+        estimate.requested_processing_tier = Some("priority".to_string());
+        assert_eq!(
+            service
+                .estimate_authorization_cost_upper_bound(&processing_pricing(), &estimate)
+                .expect("ineligible requested catalog should resolve"),
+            None
         );
     }
 

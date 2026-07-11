@@ -1,8 +1,9 @@
 use aether_data_contracts::repository::billing::StoredBillingModelContext;
 use aether_data_contracts::repository::usage::{
-    extract_provider_actual_service_tier_from_response, extract_provider_service_tier_from_body,
-    normalize_provider_service_tier, PROVIDER_ACTUAL_SERVICE_TIER_METADATA_KEY,
-    PROVIDER_SERVICE_TIER_METADATA_KEY,
+    extract_provider_actual_service_tier_from_response,
+    extract_provider_cache_ttl_minutes_from_metadata, extract_provider_service_tier_from_body,
+    normalize_provider_service_tier, resolve_provider_cache_ttl_minutes,
+    PROVIDER_ACTUAL_SERVICE_TIER_METADATA_KEY, PROVIDER_SERVICE_TIER_METADATA_KEY,
 };
 use aether_data_contracts::DataLayerError;
 use aether_usage_runtime::{UsageEvent, UsageEventType};
@@ -177,7 +178,8 @@ fn calculate_billing_computation(
         image_size: usage_event_dimension_string(&event.data, "image_size"),
         image_quality: usage_event_dimension_string(&event.data, "image_quality"),
         image_output_format: usage_event_dimension_string(&event.data, "image_output_format"),
-        cache_ttl_minutes: pricing.provider_api_key_cache_ttl_minutes,
+        cache_ttl_minutes: usage_event_provider_cache_ttl_minutes(&event.data)
+            .or(pricing.provider_api_key_cache_ttl_minutes),
     };
 
     BillingService::new()
@@ -213,6 +215,20 @@ fn usage_event_processing_tiers(
         });
 
     UsageEventProcessingTiers { requested, actual }
+}
+
+fn usage_event_provider_cache_ttl_minutes(
+    data: &aether_usage_runtime::UsageEventData,
+) -> Option<i64> {
+    resolve_provider_cache_ttl_minutes(
+        data.endpoint_api_format
+            .as_deref()
+            .or(data.api_format.as_deref()),
+        data.target_model.as_deref().or(Some(data.model.as_str())),
+        Some(data.model.as_str()),
+        data.provider_request_body.as_ref(),
+    )
+    .or_else(|| extract_provider_cache_ttl_minutes_from_metadata(data.request_metadata.as_ref()))
 }
 
 fn usage_event_is_image_usage(data: &aether_usage_runtime::UsageEventData) -> bool {
@@ -442,6 +458,104 @@ mod tests {
 
         assert_eq!(tiers.requested.as_deref(), Some("priority"));
         assert_eq!(tiers.actual.as_deref(), Some("default"));
+    }
+
+    #[tokio::test]
+    async fn settlement_uses_effective_gpt_5_6_cache_ttl_after_body_capture() {
+        let lookup = TestLookup {
+            name_context: Some(
+                StoredBillingModelContext::new(
+                    "provider-1".to_string(),
+                    Some("pay_as_you_go".to_string()),
+                    Some("key-1".to_string()),
+                    None,
+                    Some(60),
+                    "global-model-1".to_string(),
+                    "gpt-5.6-sol".to_string(),
+                    None,
+                    None,
+                    Some(json!({
+                        "tiers": [{
+                            "up_to": null,
+                            "input_price_per_1m": 5.0,
+                            "output_price_per_1m": 30.0,
+                            "cache_creation_price_per_1m": 6.25,
+                            "cache_read_price_per_1m": 0.5,
+                            "cache_ttl_pricing": [{
+                                "ttl_minutes": 60,
+                                "cache_creation_price_per_1m": 100.0,
+                                "cache_read_price_per_1m": 100.0
+                            }]
+                        }]
+                    })),
+                    Some("model-1".to_string()),
+                    Some("gpt-5.6-sol".to_string()),
+                    None,
+                    None,
+                    None,
+                )
+                .expect("billing context should build"),
+            ),
+            model_id_context: None,
+        };
+
+        for (request_id, provider_request_body, request_metadata) in [
+            (
+                "req-cache-body",
+                Some(json!({"model": "gpt-5.6-sol"})),
+                None,
+            ),
+            (
+                "req-cache-metadata",
+                None,
+                Some(json!({"provider_cache_ttl_minutes": 30})),
+            ),
+        ] {
+            let mut event = UsageEvent::new(
+                UsageEventType::Completed,
+                request_id,
+                UsageEventData {
+                    provider_name: "OpenAI".to_string(),
+                    model: "gpt-5.6-sol".to_string(),
+                    target_model: Some("gpt-5.6-sol".to_string()),
+                    provider_id: Some("provider-1".to_string()),
+                    provider_api_key_id: Some("key-1".to_string()),
+                    request_type: Some("chat".to_string()),
+                    api_format: Some("openai:responses".to_string()),
+                    endpoint_api_format: Some("openai:responses".to_string()),
+                    provider_request_body,
+                    request_metadata,
+                    input_tokens: Some(1_000_000),
+                    cache_creation_input_tokens: Some(1_000_000),
+                    status_code: Some(200),
+                    ..UsageEventData::default()
+                },
+            );
+
+            enrich_usage_event_with_billing(&lookup, &mut event)
+                .await
+                .expect("billing should succeed");
+
+            let snapshot = event
+                .data
+                .request_metadata
+                .as_ref()
+                .and_then(|value| value.get("billing_snapshot"))
+                .expect("billing snapshot should exist");
+            assert_eq!(
+                snapshot
+                    .get("resolved_dimensions")
+                    .and_then(|value| value.get("cache_ttl_minutes")),
+                Some(&json!(30))
+            );
+            assert_eq!(
+                snapshot
+                    .get("resolved_variables")
+                    .and_then(|value| value.get("cache_creation_price_per_1m")),
+                Some(&json!(6.25))
+            );
+            assert_eq!(event.data.total_cost_usd, Some(6.25));
+        }
     }
 
     #[tokio::test]

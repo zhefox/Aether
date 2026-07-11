@@ -6,7 +6,8 @@ use aether_contracts::ExecutionPlan;
 use aether_data_contracts::repository::usage::{
     extract_provider_actual_service_tier_from_response,
     extract_provider_reasoning_effort_from_body, extract_provider_service_tier_from_body,
-    normalize_provider_service_tier, PROVIDER_ACTUAL_SERVICE_TIER_METADATA_KEY,
+    normalize_provider_service_tier, resolve_provider_cache_ttl_minutes,
+    PROVIDER_ACTUAL_SERVICE_TIER_METADATA_KEY, PROVIDER_CACHE_TTL_MINUTES_METADATA_KEY,
     PROVIDER_REASONING_EFFORT_METADATA_KEY, PROVIDER_SERVICE_TIER_METADATA_KEY,
 };
 use serde_json::{json, Map, Value};
@@ -77,12 +78,25 @@ pub(crate) fn sanitize_usage_request_metadata_ref(value: Option<&Value>) -> Opti
 
 pub(crate) fn attach_provider_request_body_metadata(
     metadata: Option<Value>,
+    provider_api_format: Option<&str>,
+    provider_model: Option<&str>,
+    source_model: Option<&str>,
     provider_request_body: Option<&Value>,
 ) -> Option<Value> {
     let provider_body_is_object = provider_request_body.and_then(Value::as_object).is_some();
     let reasoning_effort = extract_provider_reasoning_effort_from_body(provider_request_body);
     let service_tier = extract_provider_service_tier_from_body(provider_request_body);
-    if !provider_body_is_object && reasoning_effort.is_none() && service_tier.is_none() {
+    let cache_ttl_minutes = resolve_provider_cache_ttl_minutes(
+        provider_api_format,
+        provider_model,
+        source_model,
+        provider_request_body,
+    );
+    if !provider_body_is_object
+        && reasoning_effort.is_none()
+        && service_tier.is_none()
+        && cache_ttl_minutes.is_none()
+    {
         return metadata;
     }
     let mut object = match metadata {
@@ -92,6 +106,7 @@ pub(crate) fn attach_provider_request_body_metadata(
     if provider_body_is_object {
         object.remove(PROVIDER_REASONING_EFFORT_METADATA_KEY);
         object.remove(PROVIDER_SERVICE_TIER_METADATA_KEY);
+        object.remove(PROVIDER_CACHE_TTL_MINUTES_METADATA_KEY);
     }
     if let Some(reasoning_effort) = reasoning_effort {
         object.insert(
@@ -103,6 +118,12 @@ pub(crate) fn attach_provider_request_body_metadata(
         object.insert(
             PROVIDER_SERVICE_TIER_METADATA_KEY.to_string(),
             Value::String(service_tier),
+        );
+    }
+    if let Some(cache_ttl_minutes) = cache_ttl_minutes {
+        object.insert(
+            PROVIDER_CACHE_TTL_MINUTES_METADATA_KEY.to_string(),
+            Value::Number(cache_ttl_minutes.into()),
         );
     }
     (!object.is_empty()).then_some(Value::Object(object))
@@ -161,6 +182,7 @@ fn copy_allowed_metadata_fields(source: &Map<String, Value>, target: &mut Map<St
     copy_non_empty_string(source, target, PROVIDER_REASONING_EFFORT_METADATA_KEY);
     copy_non_empty_string(source, target, PROVIDER_SERVICE_TIER_METADATA_KEY);
     copy_non_empty_string(source, target, PROVIDER_ACTUAL_SERVICE_TIER_METADATA_KEY);
+    copy_number(source, target, PROVIDER_CACHE_TTL_MINUTES_METADATA_KEY);
     copy_number(source, target, "provider_request_body_base64_bytes");
     copy_number(source, target, "provider_response_body_base64_bytes");
     copy_number(source, target, "client_response_body_base64_bytes");
@@ -211,6 +233,7 @@ fn move_allowed_metadata_fields(mut source: Map<String, Value>, target: &mut Map
         target,
         PROVIDER_ACTUAL_SERVICE_TIER_METADATA_KEY,
     );
+    remove_number(&mut source, target, PROVIDER_CACHE_TTL_MINUTES_METADATA_KEY);
     remove_number(&mut source, target, "provider_request_body_base64_bytes");
     remove_number(&mut source, target, "provider_response_body_base64_bytes");
     remove_number(&mut source, target, "client_response_body_base64_bytes");
@@ -817,8 +840,11 @@ mod tests {
 
         let updated = attach_provider_request_body_metadata(
             metadata.clone(),
+            Some("openai:responses"),
+            Some("gpt-5.6-sol"),
+            Some("gpt-5.6-sol"),
             Some(&json!({
-                "model": "gpt-5",
+                "model": "gpt-5.6-sol",
                 "reasoning": { "effort": "low" },
                 "service_tier": "standard"
             })),
@@ -830,12 +856,16 @@ mod tests {
             json!({
                 "trace_id": "trace-1",
                 "provider_reasoning_effort": "low",
-                "provider_service_tier": "standard"
+                "provider_service_tier": "standard",
+                "provider_cache_ttl_minutes": 30
             })
         );
 
         let cleared = attach_provider_request_body_metadata(
             metadata,
+            Some("openai:responses"),
+            Some("gpt-5"),
+            Some("gpt-5"),
             Some(&json!({
                 "model": "gpt-5"
             })),
