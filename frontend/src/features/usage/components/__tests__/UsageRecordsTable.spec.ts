@@ -288,6 +288,15 @@ describe('UsageRecordsTable', () => {
     expect(root.textContent).toContain('xhigh')
   })
 
+  it('shows request reasoning effort while the record is pending', () => {
+    const root = mountUsageRecordsTable([buildRecord({
+      status: 'pending',
+      reasoning_effort: 'max',
+    })])
+
+    expect(root.textContent).toContain('max')
+  })
+
   it('shows fast badge for priority service tier', () => {
     const root = mountUsageRecordsTable([buildRecord({ service_tier: 'priority' })])
 
