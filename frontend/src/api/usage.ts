@@ -16,6 +16,7 @@ export interface UsageRecord {
   model: string
   reasoning_effort?: string | null
   service_tier?: string | null
+  actual_service_tier?: string | null
   input_tokens: number
   effective_input_tokens?: number
   output_tokens: number
@@ -567,6 +568,7 @@ export const usageApi = {
       target_model?: string | null
       reasoning_effort?: string | null
       service_tier?: string | null
+      actual_service_tier?: string | null
       image_progress?: ImageProgress | null
     }>
   }> {
