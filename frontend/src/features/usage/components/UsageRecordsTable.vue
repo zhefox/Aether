@@ -245,6 +245,14 @@
             <div class="flex min-w-0 items-center gap-1.5">
               <span class="min-w-0 truncate text-[15px] font-semibold leading-5">{{ record.model }}</span>
               <Badge
+                v-if="getRequestTypeLabel(record)"
+                variant="outline"
+                class="h-4 rounded-full border-sky-500/30 bg-sky-500/5 px-1.5 text-[10px] leading-4 text-sky-700 dark:text-sky-300 flex-shrink-0"
+                title="线程压缩"
+              >
+                {{ getRequestTypeLabel(record) }}
+              </Badge>
+              <Badge
                 v-if="getReasoningEffort(record)"
                 variant="outline"
                 class="h-4 rounded-full border-primary/30 bg-primary/5 px-1.5 text-[10px] leading-4 text-primary flex-shrink-0"
@@ -754,6 +762,14 @@
                   />
                 </svg>
                 <Badge
+                  v-if="getRequestTypeLabel(record)"
+                  variant="outline"
+                  class="h-4 rounded-full border-sky-500/30 bg-sky-500/5 px-1.5 text-[10px] leading-4 text-sky-700 dark:text-sky-300 flex-shrink-0"
+                  title="线程压缩"
+                >
+                  {{ getRequestTypeLabel(record) }}
+                </Badge>
+                <Badge
                   v-if="getReasoningEffort(record)"
                   variant="outline"
                   class="h-4 rounded-full border-primary/30 bg-primary/5 px-1.5 text-[10px] leading-4 text-primary flex-shrink-0"
@@ -777,6 +793,14 @@
               class="flex min-w-0 items-center gap-1"
             >
               <span class="truncate">{{ record.model }}</span>
+              <Badge
+                v-if="getRequestTypeLabel(record)"
+                variant="outline"
+                class="h-4 rounded-full border-sky-500/30 bg-sky-500/5 px-1.5 text-[10px] leading-4 text-sky-700 dark:text-sky-300 flex-shrink-0"
+                title="线程压缩"
+              >
+                {{ getRequestTypeLabel(record) }}
+              </Badge>
               <Badge
                 v-if="getReasoningEffort(record)"
                 variant="outline"
@@ -1605,6 +1629,10 @@ function getReasoningEffort(record: UsageRecord): string | null {
   return effort || null
 }
 
+function getRequestTypeLabel(record: UsageRecord): string | null {
+  return record.request_type?.trim().toLowerCase() === 'compact' ? '压缩' : null
+}
+
 function getReasoningEffortTitle(record: UsageRecord): string {
   const effort = getReasoningEffort(record)
   return effort ? `Reasoning: ${effort}` : ''
@@ -1644,8 +1672,9 @@ function getModelTooltip(record: UsageRecord): string {
   const actualModel = getActualModel(record)
   const reasoningEffort = getReasoningEffort(record)
   const serviceTierTitle = getFastBadgeTitle(record)
+  const requestType = getRequestTypeLabel(record)
   const tierSuffix = serviceTierTitle ? `\n${serviceTierTitle}` : ''
-  const suffix = `${reasoningEffort ? `\nReasoning: ${reasoningEffort}` : ''}${tierSuffix}`
+  const suffix = `${requestType ? `\n操作: ${requestType}` : ''}${reasoningEffort ? `\nReasoning: ${reasoningEffort}` : ''}${tierSuffix}`
   if (actualModel) {
     return `${record.model} -> ${actualModel}${suffix}`
   }

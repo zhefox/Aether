@@ -297,6 +297,15 @@ describe('UsageRecordsTable', () => {
     expect(root.textContent).toContain('max')
   })
 
+  it('marks Responses compaction while the record is pending', () => {
+    const root = mountUsageRecordsTable([buildRecord({
+      status: 'pending',
+      request_type: 'compact',
+    })])
+
+    expect(root.textContent).toContain('压缩')
+  })
+
   it('shows fast badge for priority service tier', () => {
     const root = mountUsageRecordsTable([buildRecord({ service_tier: 'priority' })])
 

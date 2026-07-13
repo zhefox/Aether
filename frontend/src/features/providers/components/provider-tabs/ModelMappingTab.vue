@@ -79,6 +79,13 @@
               >
                 {{ getGroupEndpointScopeLabel(item.group) }}
               </Badge>
+              <Badge
+                v-if="item.group && item.group.operations.length > 0"
+                variant="outline"
+                class="text-xs shrink-0"
+              >
+                {{ getGroupOperationScopeLabel(item.group) }}
+              </Badge>
             </template>
             <!-- 正则映射 -->
             <template v-else>
@@ -160,6 +167,7 @@
               </span>
               <!-- 测试按钮（直连测试） -->
               <Button
+                v-if="!item.group || item.group.operations.length === 0"
                 variant="ghost"
                 size="icon"
                 class="h-7 w-7 shrink-0"
@@ -492,9 +500,18 @@ function getEndpointIdsKey(endpointIds: string[] | undefined): string {
   return getScopeKey(endpointIds)
 }
 
+function getOperationsKey(operations: string[] | undefined): string {
+  return getScopeKey(operations)
+}
+
 function getGroupEndpointScopeLabel(group: AliasGroup): string {
   if (!group.endpointIds || group.endpointIds.length === 0) return '全部端点'
   return `${group.endpointIds.length} 端点`
+}
+
+function getGroupOperationScopeLabel(group: AliasGroup): string {
+  if (group.operations.length === 1 && group.operations[0] === 'compact') return '压缩'
+  return `${group.operations.length} 项操作`
 }
 
 // 精确映射分组（来自 provider_model_mappings）
@@ -508,7 +525,8 @@ const exactMappingGroups = computed<AliasGroup[]>(() => {
     for (const alias of model.provider_model_mappings) {
       const apiFormatsKey = getApiFormatsKey(alias.api_formats)
       const endpointIdsKey = getEndpointIdsKey(alias.endpoint_ids)
-      const groupKey = `${model.id}|${apiFormatsKey}|${endpointIdsKey}`
+      const operationsKey = getOperationsKey(alias.operations)
+      const groupKey = `${model.id}|${apiFormatsKey}|${endpointIdsKey}|${operationsKey}`
 
       if (!groupMap.has(groupKey)) {
         const group: AliasGroup = {
@@ -517,6 +535,8 @@ const exactMappingGroups = computed<AliasGroup[]>(() => {
           apiFormats: alias.api_formats || [],
           endpointIdsKey,
           endpointIds: normalizeStringList(alias.endpoint_ids),
+          operationsKey,
+          operations: normalizeStringList(alias.operations),
           aliases: []
         }
         groupMap.set(groupKey, group)
@@ -593,7 +613,7 @@ const combinedMappings = computed<CombinedMapping[]>(() => {
   // 添加精确映射
   for (const group of exactMappingGroups.value) {
     result.push({
-      key: `exact-${group.model.id}-${group.apiFormatsKey}`,
+      key: `exact-${group.model.id}-${group.apiFormatsKey}-${group.endpointIdsKey}-${group.operationsKey}`,
       type: 'exact',
       targetModelName: group.model.global_model_display_name || group.model.provider_model_name,
       targetModelId: group.model.id,
@@ -638,7 +658,8 @@ const deleteConfirmDescription = computed(() => {
   const modelName = model.global_model_display_name || model.provider_model_name
   const aliasNames = aliases.map(a => a.name).join(', ')
   const endpointScope = getGroupEndpointScopeLabel(deletingGroup.value)
-  return `确定要删除模型「${modelName}」在「${endpointScope}」下的 ${aliases.length} 个映射吗？\n\n映射名称：${aliasNames}`
+  const operationScope = getGroupOperationScopeLabel(deletingGroup.value)
+  return `确定要删除模型「${modelName}」在「${endpointScope} / ${operationScope}」下的 ${aliases.length} 个映射吗？\n\n映射名称：${aliasNames}`
 })
 
 // 切换展开状态
@@ -685,7 +706,7 @@ function deleteGroup(group: AliasGroup) {
 async function confirmDelete() {
   if (!deletingGroup.value) return
 
-  const { model, aliases, apiFormatsKey, endpointIdsKey } = deletingGroup.value
+  const { model, aliases, apiFormatsKey, endpointIdsKey, operationsKey } = deletingGroup.value
 
   try {
     const currentAliases = model.provider_model_mappings || []
@@ -693,7 +714,11 @@ async function confirmDelete() {
     const newAliases = currentAliases.filter((a: ProviderModelAlias) => {
       const currentKey = getApiFormatsKey(a.api_formats)
       const currentEndpointIdsKey = getEndpointIdsKey(a.endpoint_ids)
-      return !(currentKey === apiFormatsKey && currentEndpointIdsKey === endpointIdsKey && aliasNamesToRemove.has(a.name))
+      const currentOperationsKey = getOperationsKey(a.operations)
+      return !(currentKey === apiFormatsKey
+        && currentEndpointIdsKey === endpointIdsKey
+        && currentOperationsKey === operationsKey
+        && aliasNamesToRemove.has(a.name))
     })
 
     await updateModel(props.provider.id, model.id, {

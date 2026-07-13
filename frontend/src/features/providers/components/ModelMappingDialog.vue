@@ -58,6 +58,21 @@
         </p>
       </div>
 
+      <div class="space-y-1.5">
+        <div class="flex items-center justify-between gap-2">
+          <Label class="text-xs">请求操作</Label>
+          <span class="text-xs text-muted-foreground">{{ operationScopeSummary }}</span>
+        </div>
+        <MultiSelect
+          v-model="selectedOperations"
+          :options="operationOptions"
+          placeholder="全部操作"
+          empty-text="暂无可选操作"
+          no-results-text="未找到操作"
+          trigger-class="h-9 rounded-md"
+        />
+      </div>
+
       <!-- 映射名称选择面板 -->
       <div class="space-y-1.5">
         <Label class="text-xs">提供商模型</Label>
@@ -302,6 +317,8 @@ export interface AliasGroup {
   apiFormats: string[]
   endpointIdsKey: string
   endpointIds: string[]
+  operationsKey: string
+  operations: string[]
   aliases: ProviderModelAlias[]
 }
 
@@ -326,6 +343,11 @@ const { error: showError, success: showSuccess, warning: showWarning } = useToas
 const { fetchModels: fetchCachedModels } = useUpstreamModelsCache()
 
 type EndpointOption = {
+  value: string
+  label: string
+}
+
+type OperationOption = {
   value: string
   label: string
 }
@@ -358,6 +380,12 @@ const selectedNames = ref<string[]>([])
 // 选中的端点 ID；空数组表示全部端点
 const selectedEndpointIds = ref<string[]>([])
 
+const selectedOperations = ref<string[]>([])
+
+const operationOptions: OperationOption[] = [
+  { value: 'compact', label: '线程压缩' }
+]
+
 // 自定义名称列表（手动添加的）
 const allCustomNames = ref<string[]>([])
 
@@ -389,6 +417,19 @@ const endpointScopeSummary = computed(() => {
   const selected = normalizedSelectedEndpointIds.value
   if (!selected || selected.length === 0) return '全部端点'
   return `${selected.length} 个端点`
+})
+
+const normalizedSelectedOperations = computed(() => {
+  const selected = normalizeStringList(selectedOperations.value)
+  return selected.length > 0 ? selected : undefined
+})
+
+const operationScopeSummary = computed(() => {
+  const selected = normalizedSelectedOperations.value
+  if (!selected) return '全部操作'
+  return selected.length === 1 && selected[0] === 'compact'
+    ? '线程压缩'
+    : `${selected.length} 项操作`
 })
 
 // 所有已知名称集合
@@ -523,6 +564,7 @@ function findDuplicateNames(
   names: string[],
   endpointIds: string[] | undefined,
   apiFormats: string[] | undefined = undefined,
+  operations: string[] | undefined = undefined,
 ): string[] {
   const duplicates = new Set<string>()
   for (const rawName of names) {
@@ -532,6 +574,7 @@ function findDuplicateNames(
       return alias.name === name
         && scopesOverlap(alias.endpoint_ids, endpointIds)
         && scopesOverlap(alias.api_formats, apiFormats)
+        && scopesOverlap(alias.operations, operations)
     })
     if (duplicate) duplicates.add(name)
   }
@@ -597,6 +640,7 @@ function initForm() {
     const existingNames = props.editingGroup.aliases.map(a => a.name)
     selectedNames.value = [...existingNames]
     selectedEndpointIds.value = normalizeStringList(props.editingGroup.endpointIds)
+    selectedOperations.value = normalizeStringList(props.editingGroup.operations)
     allCustomNames.value = [...existingNames]
   } else {
     formData.value = {
@@ -604,6 +648,7 @@ function initForm() {
     }
     selectedNames.value = []
     selectedEndpointIds.value = []
+    selectedOperations.value = []
     allCustomNames.value = []
   }
   searchQuery.value = ''
@@ -626,6 +671,10 @@ function getEndpointIdsKey(endpointIds: string[] | undefined): string {
   return getScopeKey(endpointIds)
 }
 
+function getOperationsKey(operations: string[] | undefined): string {
+  return getScopeKey(operations)
+}
+
 // 提交表单
 async function handleSubmit() {
   if (submitting.value) return
@@ -642,6 +691,7 @@ async function handleSubmit() {
     const currentAliases = targetModel.provider_model_mappings || []
     let newAliases: ProviderModelAlias[]
     const nextEndpointIds = normalizedSelectedEndpointIds.value
+    const nextOperations = normalizedSelectedOperations.value
 
     const buildAliases = (names: string[]): ProviderModelAlias[] => {
       return names.map((name) => {
@@ -652,6 +702,9 @@ async function handleSubmit() {
         if (nextEndpointIds && nextEndpointIds.length > 0) {
           alias.endpoint_ids = nextEndpointIds
         }
+        if (nextOperations && nextOperations.length > 0) {
+          alias.operations = nextOperations
+        }
         return alias
       })
     }
@@ -659,15 +712,26 @@ async function handleSubmit() {
     if (props.editingGroup) {
       const oldApiFormatsKey = props.editingGroup.apiFormatsKey
       const oldEndpointIdsKey = props.editingGroup.endpointIdsKey
+      const oldOperationsKey = props.editingGroup.operationsKey
       const oldAliasNames = new Set(props.editingGroup.aliases.map(a => a.name))
 
       const filteredAliases = currentAliases.filter((a: ProviderModelAlias) => {
         const currentKey = getApiFormatsKey(a.api_formats)
         const currentEndpointIdsKey = getEndpointIdsKey(a.endpoint_ids)
-        return !(currentKey === oldApiFormatsKey && currentEndpointIdsKey === oldEndpointIdsKey && oldAliasNames.has(a.name))
+        const currentOperationsKey = getOperationsKey(a.operations)
+        return !(currentKey === oldApiFormatsKey
+          && currentEndpointIdsKey === oldEndpointIdsKey
+          && currentOperationsKey === oldOperationsKey
+          && oldAliasNames.has(a.name))
       })
 
-      const duplicates = findDuplicateNames(filteredAliases, selectedNames.value, nextEndpointIds)
+      const duplicates = findDuplicateNames(
+        filteredAliases,
+        selectedNames.value,
+        nextEndpointIds,
+        undefined,
+        nextOperations,
+      )
       if (duplicates.length > 0) {
         showError(`以下映射名称已存在：${duplicates.join(', ')}`, '错误')
         return
@@ -678,7 +742,13 @@ async function handleSubmit() {
         ...buildAliases(selectedNames.value)
       ]
     } else {
-      const duplicates = findDuplicateNames(currentAliases, selectedNames.value, nextEndpointIds)
+      const duplicates = findDuplicateNames(
+        currentAliases,
+        selectedNames.value,
+        nextEndpointIds,
+        undefined,
+        nextOperations,
+      )
       if (duplicates.length > 0) {
         showError(`以下映射名称已存在：${duplicates.join(', ')}`, '错误')
         return

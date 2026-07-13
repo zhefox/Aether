@@ -630,6 +630,7 @@ export function useUsageData(options: UseUsageDataOptions) {
         provider_key_name: record.provider_key_name || existing.provider_key_name,
         rate_multiplier: record.rate_multiplier ?? existing.rate_multiplier,
         target_model: record.target_model ?? existing.target_model,
+        request_type: record.request_type ?? existing.request_type,
         reasoning_effort: record.reasoning_effort ?? existing.reasoning_effort,
         service_tier: record.service_tier ?? existing.service_tier,
         actual_service_tier: record.actual_service_tier ?? existing.actual_service_tier

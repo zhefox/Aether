@@ -558,6 +558,11 @@ async function pollActiveRequests() {
         if ('target_model' in update && (typeof update.target_model === 'string' || update.target_model === null)) {
           record.target_model = update.target_model
         }
+        if ('request_type' in update) {
+          record.request_type = typeof update.request_type === 'string'
+            ? update.request_type
+            : null
+        }
         if ('reasoning_effort' in update) {
           record.reasoning_effort = typeof update.reasoning_effort === 'string'
             ? update.reasoning_effort
