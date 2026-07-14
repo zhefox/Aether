@@ -38,7 +38,7 @@ describe('PoolKeyBatchEditDialog', () => {
       providerId: 'provider-1',
       providerName: 'Google API',
       keyIds: ['key-1', 'key-2'],
-      availableApiFormats: ['gemini:chat'],
+      availableApiFormats: ['gemini:generate_content'],
     })
 
     app.mount(root)
