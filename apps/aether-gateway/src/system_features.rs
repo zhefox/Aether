@@ -609,7 +609,7 @@ mod tests {
             settings
                 .api_format_suffixes("openai:chat")
                 .expect("chat suffixes")
-                .into_iter()
+                .iter()
                 .collect::<Vec<_>>(),
             vec!["low", "max"]
         );

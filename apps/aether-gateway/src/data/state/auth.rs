@@ -1818,24 +1818,11 @@ impl GatewayDataState {
             .effective_user_groups_for_user(&snapshot.user_id)
             .await?;
 
-        let allowed_providers =
-            resolve_effective_list_policy(None, "unrestricted", &groups, |group| {
-                (
-                    &group.allowed_providers_mode,
-                    group.allowed_providers.clone(),
-                )
-            });
-        let allowed_api_formats =
-            resolve_effective_api_format_policy(None, "unrestricted", &groups, |group| {
-                (
-                    &group.allowed_api_formats_mode,
-                    group.allowed_api_formats.clone(),
-                )
-            });
-        let allowed_models =
-            resolve_effective_list_policy(None, "unrestricted", &groups, |group| {
-                (&group.allowed_models_mode, group.allowed_models.clone())
-            });
+        let GatewayUserEffectiveListPolicies {
+            allowed_providers,
+            allowed_api_formats,
+            allowed_models,
+        } = resolve_group_effective_list_policies(&groups);
         let user_rate_limit = resolve_effective_rate_limit_policy(None, "system", &groups);
         snapshot.user_allowed_providers = allowed_providers;
         snapshot.user_allowed_api_formats = allowed_api_formats;
@@ -1860,36 +1847,7 @@ impl GatewayDataState {
         } else {
             Vec::new()
         };
-        Ok(GatewayUserEffectiveListPolicies {
-            allowed_providers: resolve_effective_list_policy(
-                user.allowed_providers.clone(),
-                &user.allowed_providers_mode,
-                &groups,
-                |group| {
-                    (
-                        &group.allowed_providers_mode,
-                        group.allowed_providers.clone(),
-                    )
-                },
-            ),
-            allowed_api_formats: resolve_effective_api_format_policy(
-                user.allowed_api_formats.clone(),
-                &user.allowed_api_formats_mode,
-                &groups,
-                |group| {
-                    (
-                        &group.allowed_api_formats_mode,
-                        group.allowed_api_formats.clone(),
-                    )
-                },
-            ),
-            allowed_models: resolve_effective_list_policy(
-                user.allowed_models.clone(),
-                &user.allowed_models_mode,
-                &groups,
-                |group| (&group.allowed_models_mode, group.allowed_models.clone()),
-            ),
-        })
+        Ok(resolve_group_effective_list_policies(&groups))
     }
 
     async fn effective_user_groups_for_user(
@@ -1977,6 +1935,35 @@ fn apply_admin_unrestricted_auth_snapshot(snapshot: &mut StoredAuthApiKeySnapsho
     snapshot.api_key_allowed_models = None;
     snapshot.api_key_rate_limit = None;
     snapshot.api_key_concurrent_limit = None;
+}
+
+// Per-user list policy columns are retained only for legacy import/export compatibility.
+// Runtime authorization and user-facing catalogs must both treat group policies as authoritative.
+fn resolve_group_effective_list_policies(
+    groups: &[aether_data::repository::users::StoredUserGroup],
+) -> GatewayUserEffectiveListPolicies {
+    GatewayUserEffectiveListPolicies {
+        allowed_providers: resolve_effective_list_policy(None, "unrestricted", groups, |group| {
+            (
+                &group.allowed_providers_mode,
+                group.allowed_providers.clone(),
+            )
+        }),
+        allowed_api_formats: resolve_effective_api_format_policy(
+            None,
+            "unrestricted",
+            groups,
+            |group| {
+                (
+                    &group.allowed_api_formats_mode,
+                    group.allowed_api_formats.clone(),
+                )
+            },
+        ),
+        allowed_models: resolve_effective_list_policy(None, "unrestricted", groups, |group| {
+            (&group.allowed_models_mode, group.allowed_models.clone())
+        }),
+    }
 }
 
 fn resolve_effective_list_policy(
@@ -2592,8 +2579,9 @@ mod tests {
             Some("hash-user".to_string()),
             snapshot,
         )]));
+        let user = sample_auth_user("user-1", "user");
         let user_repository = Arc::new(InMemoryUserReadRepository::seed_auth_users(vec![
-            sample_auth_user("user-1", "user"),
+            user.clone()
         ]));
         let group = user_repository
             .create_user_group(UpsertUserGroupRecord {
@@ -2638,6 +2626,23 @@ mod tests {
             Some(&["claude-sonnet-4-5".to_string()][..])
         );
         assert_eq!(resolved.user_rate_limit, Some(30));
+
+        let catalog_policies = state
+            .resolve_user_effective_list_policies(&user)
+            .await
+            .expect("catalog policies should resolve");
+        assert_eq!(
+            catalog_policies.allowed_providers.as_deref(),
+            resolved.effective_allowed_providers()
+        );
+        assert_eq!(
+            catalog_policies.allowed_api_formats.as_deref(),
+            resolved.effective_allowed_api_formats()
+        );
+        assert_eq!(
+            catalog_policies.allowed_models.as_deref(),
+            resolved.effective_allowed_models()
+        );
     }
 
     #[tokio::test]

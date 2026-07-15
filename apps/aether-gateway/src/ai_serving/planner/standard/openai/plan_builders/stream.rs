@@ -423,7 +423,7 @@ mod tests {
             .json_body
             .as_ref()
             .is_some_and(|body| body.get("stream").is_none()));
-        assert!(built.plan.headers.get("accept").is_none());
+        assert!(!built.plan.headers.contains_key("accept"));
     }
 
     #[test]

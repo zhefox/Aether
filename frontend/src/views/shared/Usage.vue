@@ -817,6 +817,7 @@ onMounted(async () => {
     const heatmapPromise = loadHeatmapData().catch(err => {
       log.error('加载热力图数据失败:', err)
     })
+    const adminUsersPromise = loadAdminUsers()
 
     await loadRecords(
       { page: currentPage.value, pageSize: pageSize.value },
@@ -825,8 +826,7 @@ onMounted(async () => {
     )
     void (async () => {
       await refreshAdminAnalytics({ force: true, preserveOnFailure: false })
-      await heatmapPromise
-      await loadAdminUsers()
+      await Promise.all([heatmapPromise, adminUsersPromise])
     })()
   } else {
     // 用户页面：loadStats 已包含记录加载，不需要单独调用 loadRecords
