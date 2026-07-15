@@ -1,4 +1,4 @@
-use super::{collect_workspace_rust_files, read_workspace_file};
+use super::{collect_workspace_rust_files, read_workspace_file, workspace_file_exists};
 
 fn assert_manifest_excludes(manifest_path: &str, forbidden: &[&str]) {
     let manifest = read_workspace_file(manifest_path);
@@ -297,8 +297,9 @@ fn frontdoor_owns_bounded_request_body_buffering() {
 
 #[test]
 fn benchmark_binaries_are_outside_the_reusable_testkit() {
+    let testkit_bin = "crates/aether-testing/testkit/src/bin";
     assert!(
-        collect_workspace_rust_files("crates/aether-testing/testkit/src/bin").is_empty(),
+        !workspace_file_exists(testkit_bin) || collect_workspace_rust_files(testkit_bin).is_empty(),
         "aether-testkit must not own benchmark binaries"
     );
     assert!(
