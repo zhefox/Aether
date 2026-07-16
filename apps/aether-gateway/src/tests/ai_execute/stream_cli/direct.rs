@@ -705,18 +705,15 @@ async fn gateway_executes_codex_cli_stream_via_local_decision_gate_after_oauth_r
         seen_execution_runtime_request.thread_id,
         seen_execution_runtime_request.prompt_cache_key
     );
-    assert_eq!(seen_execution_runtime_request.responses_lite, "true");
-    assert!(!seen_execution_runtime_request.has_top_level_tools);
-    assert!(!seen_execution_runtime_request.has_top_level_instructions);
-    assert!(seen_execution_runtime_request.has_additional_tools);
-    assert!(!seen_execution_runtime_request.parallel_tool_calls);
+    assert!(seen_execution_runtime_request.responses_lite.is_empty());
+    assert!(seen_execution_runtime_request.has_top_level_tools);
+    assert!(seen_execution_runtime_request.has_top_level_instructions);
+    assert!(!seen_execution_runtime_request.has_additional_tools);
+    assert!(seen_execution_runtime_request.parallel_tool_calls);
     assert_eq!(seen_execution_runtime_request.reasoning_effort, "low");
-    assert_eq!(
-        seen_execution_runtime_request.reasoning_context,
-        "all_turns"
-    );
+    assert!(seen_execution_runtime_request.reasoning_context.is_empty());
     assert!(seen_execution_runtime_request.has_compaction_trigger);
-    assert!(!seen_execution_runtime_request.has_context_management);
+    assert!(seen_execution_runtime_request.has_context_management);
 
     let stored_candidates = request_candidate_repository
         .list_by_request_id("trace-codex-cli-stream-local-123")

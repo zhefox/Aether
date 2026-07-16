@@ -607,10 +607,6 @@ mod tests {
                     }
                 }
             }],
-            "context_management": [{
-                "type": "compaction",
-                "compact_threshold": 128000
-            }],
             "parallel_tool_calls": true
         });
 
@@ -633,7 +629,6 @@ mod tests {
         assert_eq!(body, first);
         assert!(body.get("instructions").is_none());
         assert!(body.get("tools").is_none());
-        assert!(body.get("context_management").is_none());
         assert_eq!(body["input"][0]["type"], "additional_tools");
         assert_eq!(body["input"][0]["role"], "developer");
         assert_eq!(body["input"][0]["tools"][0]["name"], "lookup");
@@ -654,6 +649,51 @@ mod tests {
         assert_eq!(body["reasoning"]["effort"], "low");
         assert_eq!(body["reasoning"]["context"], "all_turns");
         assert!(body["reasoning"].get("summary").is_none());
+    }
+
+    #[test]
+    fn gpt_5_6_sol_uses_standard_responses_contract_for_server_side_compaction() {
+        let mut body = json!({
+            "model": "gpt-5.6-sol",
+            "instructions": "Preserve the standard Responses request shape.",
+            "input": [{
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "compact"}]
+            }],
+            "tools": [{"type": "function", "name": "lookup"}],
+            "context_management": [{
+                "type": "compaction",
+                "compact_threshold": 128000
+            }],
+            "parallel_tool_calls": true
+        });
+        let finalization = OpenAiProviderRequestFinalization {
+            source_api_format: "openai:responses",
+            provider_api_format: "openai:responses",
+            provider_type: "codex",
+            provider_model: "gpt-5.6-sol",
+            source_model: "gpt-5.6-sol",
+            body_rules: None,
+            upstream_is_stream: true,
+            require_body_stream_field: true,
+        };
+
+        finalize_openai_provider_request(&mut body, finalization)
+            .expect("server-side compaction should use the standard Responses contract");
+        let first = body.clone();
+        finalize_openai_provider_request(&mut body, finalization)
+            .expect("standard Responses finalization should be idempotent");
+
+        assert_eq!(body, first);
+        assert_eq!(body["context_management"][0]["compact_threshold"], 128000);
+        assert_eq!(
+            body["instructions"],
+            "Preserve the standard Responses request shape."
+        );
+        assert_eq!(body["tools"][0]["name"], "lookup");
+        assert_eq!(body["parallel_tool_calls"], true);
+        assert!(body["reasoning"].get("context").is_none());
     }
 
     #[test]

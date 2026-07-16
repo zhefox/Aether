@@ -1290,6 +1290,16 @@ fn strip_codex_responses_lite_image_details(item: &mut Value) {
     }
 }
 
+fn codex_responses_lite_supports_context_management(context_management: Option<&Value>) -> bool {
+    context_management.is_none_or(Value::is_null)
+}
+
+fn codex_responses_lite_supports_request_body(provider_request_body: Option<&Value>) -> bool {
+    provider_request_body.is_none_or(|body| {
+        codex_responses_lite_supports_context_management(body.get("context_management"))
+    })
+}
+
 fn apply_codex_responses_lite_body_contract(
     body_object: &mut serde_json::Map<String, Value>,
     capabilities: &CodexResponsesModelCapabilities,
@@ -1297,8 +1307,6 @@ fn apply_codex_responses_lite_body_contract(
     if !capabilities.use_responses_lite {
         return;
     }
-
-    body_object.remove("context_management");
 
     let tools_are_valid = body_object
         .get("tools")
@@ -1573,6 +1581,17 @@ pub fn apply_codex_openai_responses_special_body_edits_with_source_model_and_cap
         );
         &bundled_capabilities
     };
+    let standard_contract_capabilities = (capabilities.use_responses_lite
+        && !codex_responses_lite_supports_context_management(
+            body_object.get("context_management"),
+        ))
+    .then(|| CodexResponsesModelCapabilities {
+        use_responses_lite: false,
+        ..capabilities.clone()
+    });
+    let capabilities = standard_contract_capabilities
+        .as_ref()
+        .unwrap_or(capabilities);
     let supports_reasoning_mode =
         crate::formats::shared::model_directives::openai_model_resolves_to_gpt_5_6(
             effective_provider_model.as_str(),
@@ -1698,6 +1717,26 @@ pub fn apply_codex_openai_responses_lite_header_with_capabilities(
     source_model: &str,
     model_capabilities: Option<&CodexResponsesModelCapabilities>,
 ) {
+    apply_codex_openai_responses_lite_header_for_request_body_with_capabilities(
+        provider_request_headers,
+        None,
+        provider_type,
+        provider_api_format,
+        provider_model,
+        source_model,
+        model_capabilities,
+    );
+}
+
+pub fn apply_codex_openai_responses_lite_header_for_request_body_with_capabilities(
+    provider_request_headers: &mut BTreeMap<String, String>,
+    provider_request_body: Option<&Value>,
+    provider_type: &str,
+    provider_api_format: &str,
+    provider_model: &str,
+    source_model: &str,
+    model_capabilities: Option<&CodexResponsesModelCapabilities>,
+) {
     if !is_codex_openai_responses_request(provider_type, provider_api_format) {
         return;
     }
@@ -1710,7 +1749,9 @@ pub fn apply_codex_openai_responses_lite_header_with_capabilities(
             resolve_codex_responses_model_capabilities(provider_model, source_model, None);
         &bundled_capabilities
     };
-    if capabilities.use_responses_lite {
+    if capabilities.use_responses_lite
+        && codex_responses_lite_supports_request_body(provider_request_body)
+    {
         provider_request_headers
             .insert(CODEX_RESPONSES_LITE_HEADER.to_string(), "true".to_string());
     }
@@ -1770,12 +1811,14 @@ pub fn apply_codex_openai_special_headers(
         .get("model")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    apply_codex_openai_responses_lite_header(
+    apply_codex_openai_responses_lite_header_for_request_body_with_capabilities(
         provider_request_headers,
+        Some(provider_request_body),
         provider_type,
         provider_api_format,
         provider_model,
         provider_model,
+        None,
     );
 
     apply_codex_openai_compact_terminal_headers(
@@ -1790,6 +1833,7 @@ mod tests {
     use super::{
         apply_codex_openai_responses_chat_body_edits,
         apply_codex_openai_responses_compact_body_edits,
+        apply_codex_openai_responses_lite_header_for_request_body_with_capabilities,
         apply_codex_openai_responses_lite_header_with_capabilities,
         apply_codex_openai_responses_special_body_edits,
         apply_codex_openai_responses_special_body_edits_with_source_model_and_capabilities,
@@ -1895,6 +1939,33 @@ mod tests {
             headers.get("x-openai-internal-codex-responses-lite"),
             Some(&"true".to_string())
         );
+    }
+
+    #[test]
+    fn codex_responses_lite_header_is_omitted_for_server_side_compaction() {
+        let mut headers = std::collections::BTreeMap::from([(
+            CODEX_RESPONSES_LITE_HEADER.to_string(),
+            "true".to_string(),
+        )]);
+        let body = json!({
+            "model": "gpt-5.6-sol",
+            "context_management": [{
+                "type": "compaction",
+                "compact_threshold": 128000
+            }]
+        });
+
+        apply_codex_openai_responses_lite_header_for_request_body_with_capabilities(
+            &mut headers,
+            Some(&body),
+            "codex",
+            "openai:responses",
+            "gpt-5.6-sol",
+            "gpt-5.6-sol",
+            None,
+        );
+
+        assert!(!headers.contains_key(CODEX_RESPONSES_LITE_HEADER));
     }
 
     #[test]
