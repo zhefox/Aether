@@ -61,6 +61,27 @@ export function formatCodexResetCreditCount(count: number | null | undefined): s
   return `共 ${count ?? 0} 次机会`
 }
 
+interface CodexResetCreditCrypto {
+  randomUUID?: () => string
+  getRandomValues: (array: Uint8Array) => Uint8Array
+}
+
+export function createCodexResetCreditIdempotencyKey(
+  cryptoSource: CodexResetCreditCrypto | undefined = globalThis.crypto,
+): string {
+  const randomUUID = cryptoSource?.randomUUID?.bind(cryptoSource)
+  if (randomUUID) return randomUUID()
+  if (!cryptoSource) {
+    throw new Error('浏览器不支持安全随机数，无法生成幂等 ID')
+  }
+
+  const bytes = cryptoSource.getRandomValues(new Uint8Array(16))
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = Array.from(bytes, byte => byte.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
 function codexResetCreditRemainingSeconds(
   item: QuotaResetCreditSnapshot,
   snapshot: QuotaResetCreditsSnapshot,

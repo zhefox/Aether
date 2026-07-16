@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  createCodexResetCreditIdempotencyKey,
   formatCodexResetCreditCount,
   formatCodexResetCreditDays,
   getCodexResetCreditAvailableCount,
@@ -107,5 +108,23 @@ describe('codex reset credit display helpers', () => {
   it('formats reset credit remaining days with a one-day minimum', () => {
     expect(formatCodexResetCreditDays(1)).toBe('1天')
     expect(formatCodexResetCreditDays(86_401)).toBe('2天')
+  })
+
+  it('generates a UUID v4 with secure random bytes when randomUUID is unavailable', () => {
+    const idempotencyKey = createCodexResetCreditIdempotencyKey({
+      getRandomValues(array) {
+        array.set(Array.from({ length: 16 }, (_, index) => index))
+        return array
+      },
+    })
+
+    expect(idempotencyKey).toBe('00010203-0405-4607-8809-0a0b0c0d0e0f')
+  })
+
+  it('prefers the browser randomUUID implementation when available', () => {
+    expect(createCodexResetCreditIdempotencyKey({
+      randomUUID: () => 'existing-random-uuid',
+      getRandomValues: array => array,
+    })).toBe('existing-random-uuid')
   })
 })
