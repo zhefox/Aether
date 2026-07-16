@@ -1724,6 +1724,7 @@ pub fn admin_system_config_default_value(key: &str) -> Option<serde_json::Value>
         "backup_s3_scope" => Some(json!("data")),
         "backup_s3_endpoint" => Some(serde_json::Value::Null),
         "backup_s3_region" => Some(json!("auto")),
+        "backup_s3_user_agent" => Some(json!("rclone/v1.68.0")),
         "backup_s3_bucket" => Some(serde_json::Value::Null),
         "backup_s3_prefix" => Some(json!("aether/backups/")),
         "backup_s3_access_key_id" => Some(serde_json::Value::Null),
@@ -3377,6 +3378,10 @@ mod tests {
         assert_eq!(
             admin_system_config_default_value("backup_s3_path_style"),
             Some(json!(true))
+        );
+        assert_eq!(
+            admin_system_config_default_value("backup_s3_user_agent"),
+            Some(json!("rclone/v1.68.0"))
         );
     }
 
