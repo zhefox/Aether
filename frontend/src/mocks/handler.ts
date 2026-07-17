@@ -1091,6 +1091,204 @@ const MOCK_CAPABILITIES = [
   { name: 'context_1m', display_name: '1M上下文', description: '支持1M上下文窗口', match_mode: 'compatible', short_name: '1M' }
 ]
 
+const MOCK_CODEX_POOL_PROVIDER_ID = 'provider-codex-pool-demo'
+const MOCK_CODEX_POOL_PROVIDER = {
+  id: MOCK_CODEX_POOL_PROVIDER_ID,
+  name: 'Codex 周期额度演示',
+  provider_type: 'codex',
+  description: '展示 5H、周、月及组合额度窗口',
+  website: 'https://openai.com/codex',
+  provider_priority: 0,
+  billing_type: 'free_tier',
+  monthly_used_usd: 0,
+  is_active: true,
+  total_endpoints: 1,
+  active_endpoints: 1,
+  total_keys: 4,
+  active_keys: 4,
+  total_models: 3,
+  active_models: 3,
+  avg_health_score: 0.97,
+  unhealthy_endpoints: 0,
+  api_formats: ['openai:responses'],
+  endpoint_health_details: [
+    { api_format: 'openai:responses', health_score: 0.97, is_active: true, active_keys: 4 }
+  ],
+  pool_advanced: {
+    enabled: true,
+    probing_enabled: true,
+  },
+  claude_code_advanced: null,
+  proxy: null,
+  created_at: '2026-07-01T00:00:00Z',
+  updated_at: new Date().toISOString(),
+}
+
+function createMockCodexQuotaWindow(
+  code: string,
+  label: string,
+  windowMinutes: number,
+  remainingRatio: number,
+  resetSeconds: number,
+  observedAt: number,
+  requestCount: number,
+) {
+  return {
+    code,
+    label,
+    scope: 'account',
+    unit: 'percent',
+    used_ratio: 1 - remainingRatio,
+    remaining_ratio: remainingRatio,
+    reset_at: resetSeconds > 0 ? observedAt + resetSeconds : null,
+    reset_seconds: resetSeconds,
+    window_minutes: windowMinutes,
+    usage: {
+      request_count: requestCount,
+      total_tokens: requestCount * 1250,
+      total_cost_usd: (requestCount * 0.0025).toFixed(8),
+    },
+  }
+}
+
+function createMockCodexPoolKeys() {
+  const nowSeconds = Math.floor(Date.now() / 1000)
+  const common = {
+    provider_type: 'codex',
+    is_active: true,
+    auth_type: 'oauth',
+    credential_kind: 'oauth_session',
+    runtime_auth_kind: 'bearer',
+    oauth_managed: true,
+    oauth_header_auth: true,
+    can_refresh_oauth: true,
+    can_export_oauth: true,
+    can_edit_oauth: true,
+    oauth_expires_at: nowSeconds + 14 * 24 * 3600,
+    api_formats: ['openai:responses'],
+    rate_multipliers: null,
+    internal_priority: 50,
+    rpm_limit: null,
+    cache_ttl_minutes: 5,
+    max_probe_interval_minutes: 32,
+    health_score: 0.97,
+    circuit_breaker_open: false,
+    proxy: null,
+    cooldown_reason: null,
+    cooldown_ttl_seconds: null,
+    cost_window_usage: 0,
+    cost_limit: null,
+    sticky_sessions: 0,
+    lru_score: null,
+    created_at: '2026-07-01T00:00:00Z',
+    imported_at: '2026-07-01T00:00:00Z',
+    last_used_at: new Date(nowSeconds * 1000 - 10 * 60 * 1000).toISOString(),
+    scheduling_status: 'available',
+    scheduling_reason: 'available',
+    scheduling_label: '可调度',
+    scheduling_reasons: [],
+  }
+
+  const buildKey = (
+    keyId: string,
+    keyName: string,
+    planType: string,
+    accountQuota: string,
+    windows: ReturnType<typeof createMockCodexQuotaWindow>[],
+    requestCount: number,
+  ) => ({
+    ...common,
+    key_id: keyId,
+    key_name: keyName,
+    oauth_plan_type: planType,
+    oauth_account_id: `acct-${keyId}`,
+    oauth_account_name: keyName,
+    quota_updated_at: nowSeconds - 10 * 60,
+    account_quota: accountQuota,
+    request_count: requestCount,
+    total_tokens: requestCount * 2400,
+    total_cost_usd: (requestCount * 0.004).toFixed(8),
+    status_snapshot: {
+      oauth: {
+        code: 'valid',
+        label: '有效',
+        expires_at: nowSeconds + 14 * 24 * 3600,
+        requires_reauth: false,
+        expiring_soon: false,
+      },
+      account: {
+        code: 'ok',
+        label: null,
+        reason: null,
+        blocked: false,
+        source: null,
+        recoverable: false,
+      },
+      quota: {
+        version: 2,
+        provider_type: 'codex',
+        code: 'ok',
+        label: null,
+        reason: null,
+        freshness: 'fresh',
+        source: 'response_headers',
+        observed_at: nowSeconds,
+        updated_at: nowSeconds,
+        exhausted: false,
+        usage_ratio: windows.reduce((max, window) => Math.max(max, window.used_ratio), 0),
+        plan_type: planType,
+        credits: { has_credits: false, unlimited: false },
+        windows,
+      },
+    },
+  })
+
+  return [
+    buildKey(
+      'codex-pool-plus-dual',
+      'Plus · 5H + 周',
+      'plus',
+      '5H剩余 62.0% | 周剩余 84.0%',
+      [
+        createMockCodexQuotaWindow('5h', '5H', 300, 0.62, 3 * 3600, nowSeconds, 18),
+        createMockCodexQuotaWindow('weekly', '周', 10_080, 0.84, 5 * 24 * 3600, nowSeconds, 42),
+      ],
+      128,
+    ),
+    buildKey(
+      'codex-pool-team-weekly',
+      'Team · 仅周',
+      'team',
+      '周剩余 71.0%',
+      [
+        createMockCodexQuotaWindow('weekly', '周', 10_080, 0.71, 4 * 24 * 3600, nowSeconds, 31),
+      ],
+      96,
+    ),
+    buildKey(
+      'codex-pool-business-monthly',
+      'Codex · 仅月（含空占位）',
+      'self_serve_business_usage_based',
+      '月剩余 86.0%',
+      [
+        createMockCodexQuotaWindow('monthly', '月', 43_800, 0.86, 2_627_672, nowSeconds, 54),
+        createMockCodexQuotaWindow('weekly', '周', 0, 1, 0, nowSeconds, 0),
+      ],
+      214,
+    ),
+    buildKey(
+      'codex-pool-free-five-hour',
+      'Free · 仅5H',
+      'free',
+      '5H剩余 93.0%',
+      [
+        createMockCodexQuotaWindow('5h', '5H', 300, 0.93, 4 * 3600, nowSeconds, 7),
+      ],
+      37,
+    ),
+  ]
+}
+
 /**
  * Mock API 路由处理器
  */
@@ -1511,6 +1709,33 @@ const mockHandlers: Record<string, (config: AxiosRequestConfig) => Promise<Axios
     await delay()
     requireAdmin()
     return createMockResponse(MOCK_PROVIDERS)
+  },
+
+  'GET /api/admin/pool/overview': async () => {
+    await delay()
+    requireAdmin()
+    return createMockResponse({
+      items: [{
+        provider_id: MOCK_CODEX_POOL_PROVIDER_ID,
+        provider_name: MOCK_CODEX_POOL_PROVIDER.name,
+        provider_type: 'codex',
+        total_keys: 4,
+        active_keys: 4,
+        cooldown_count: 0,
+        pool_enabled: true,
+        provider_hot_count: 2,
+        provider_desired_hot: 3,
+        provider_in_flight: 1,
+        provider_ema_in_flight: 0.8,
+        provider_burst_pending: false,
+      }]
+    })
+  },
+
+  'GET /api/admin/pool/scheduling-presets': async () => {
+    await delay()
+    requireAdmin()
+    return createMockResponse([])
   },
 
   'POST /api/admin/providers': async (config) => {
@@ -2530,11 +2755,64 @@ registerDynamicRoute('PUT', '/api/admin/modules/status/:moduleName/enabled', asy
 registerDynamicRoute('GET', '/api/admin/providers/:providerId/summary', async (_config, params) => {
   await delay()
   requireAdmin()
+  if (params.providerId === MOCK_CODEX_POOL_PROVIDER_ID) {
+    return createMockResponse(MOCK_CODEX_POOL_PROVIDER)
+  }
   const provider = MOCK_PROVIDERS.find(p => p.id === params.providerId)
   if (!provider) {
     throw { response: createMockResponse({ detail: '提供商不存在' }, 404) }
   }
   return createMockResponse(provider)
+})
+
+registerDynamicRoute('GET', '/api/admin/pool/:providerId/keys', async (config, params) => {
+  await delay()
+  requireAdmin()
+  if (params.providerId !== MOCK_CODEX_POOL_PROVIDER_ID) {
+    return createMockResponse({ total: 0, page: 1, page_size: 50, keys: [] })
+  }
+
+  const query = (config.params || {}) as Record<string, unknown>
+  const search = String(query.search || '').trim().toLowerCase()
+  const status = String(query.status || 'all').trim().toLowerCase()
+  const sortBy = String(query.sort_by || 'imported_at').trim()
+  const sortOrder = String(query.sort_order || 'desc').trim().toLowerCase()
+  let keys = createMockCodexPoolKeys()
+
+  if (search) {
+    keys = keys.filter(key => [
+      key.key_name,
+      key.oauth_plan_type,
+      key.oauth_account_id,
+      key.account_quota,
+    ].some(value => String(value || '').toLowerCase().includes(search)))
+  }
+  if (status === 'enabled') {
+    keys = keys.filter(key => key.is_active)
+  } else if (status === 'disabled') {
+    keys = keys.filter(key => !key.is_active)
+  } else if (status !== 'all') {
+    keys = keys.filter(key => key.scheduling_status === status || key.scheduling_reason === status)
+  }
+
+  keys.sort((left, right) => {
+    const leftValue = String((left as Record<string, unknown>)[sortBy] ?? left.imported_at ?? '')
+    const rightValue = String((right as Record<string, unknown>)[sortBy] ?? right.imported_at ?? '')
+    const comparison = leftValue.localeCompare(rightValue)
+    return sortOrder === 'asc' ? comparison : -comparison
+  })
+
+  const rawPage = Number(query.page)
+  const rawPageSize = Number(query.page_size)
+  const page = Number.isFinite(rawPage) && rawPage >= 1 ? Math.floor(rawPage) : 1
+  const pageSize = Number.isFinite(rawPageSize) && rawPageSize >= 1 ? Math.floor(rawPageSize) : 50
+  const start = (page - 1) * pageSize
+  return createMockResponse({
+    total: keys.length,
+    page,
+    page_size: pageSize,
+    keys: keys.slice(start, start + pageSize),
+  })
 })
 
 // Provider 模型映射预览
@@ -2715,6 +2993,25 @@ registerDynamicRoute('POST', '/api/admin/endpoints/providers/:providerId/keys', 
 registerDynamicRoute('POST', '/api/admin/endpoints/providers/:providerId/refresh-quota', async (config, params) => {
   await delay()
   requireAdmin()
+  if (params.providerId === MOCK_CODEX_POOL_PROVIDER_ID) {
+    const body = JSON.parse(config.data || '{}')
+    const requestedKeyIds = Array.isArray(body.key_ids)
+      ? body.key_ids.map((id: unknown) => String(id).trim()).filter(Boolean)
+      : createMockCodexPoolKeys().map(key => key.key_id)
+    const keyNames = new Map(createMockCodexPoolKeys().map(key => [key.key_id, key.key_name]))
+    const results = requestedKeyIds.map((keyId: string) => ({
+      key_id: keyId,
+      key_name: keyNames.get(keyId) || keyId,
+      status: 'success',
+      metadata: { updated_at: new Date().toISOString() },
+    }))
+    return createMockResponse({
+      success: results.length,
+      failed: 0,
+      total: results.length,
+      results,
+    })
+  }
   if (!PROVIDER_KEYS_CACHE[params.providerId]) {
     PROVIDER_KEYS_CACHE[params.providerId] = generateMockKeysForProvider(params.providerId, 2)
   }
@@ -2852,6 +3149,20 @@ registerDynamicRoute('POST', '/api/admin/endpoints/keys/:keyId/clear-oauth-inval
   await delay()
   requireAdmin()
   return createMockResponse({ message: 'OAuth invalid cleared (demo)', key_id: params.keyId })
+})
+
+registerDynamicRoute('POST', '/api/admin/endpoints/keys/:keyId/reset-cycle-stats', async (_config, params) => {
+  await delay()
+  requireAdmin()
+  const key = createMockCodexPoolKeys().find(item => item.key_id === params.keyId)
+  const windows = key?.status_snapshot.quota.windows.filter(window => (
+    window.window_minutes > 0 && !window.code.startsWith('spark_')
+  )).length ?? 0
+  return createMockResponse({
+    message: '已重置周期统计（演示模式）',
+    reset_at: Math.floor(Date.now() / 1000),
+    windows,
+  })
 })
 
 
