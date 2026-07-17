@@ -140,7 +140,7 @@ const modelBadges = computed<ModelBadgePresentation[]>(() => {
     badges.push({
       key: 'fast',
       label: 'Fast',
-      className: 'border-amber-400/50 bg-amber-400/10 text-amber-700 dark:border-amber-300/40 dark:bg-amber-300/10 dark:text-amber-300',
+      className: 'border-amber-400/50 bg-transparent text-amber-700 dark:border-amber-300/40 dark:text-amber-300',
       title: '上游请求档位：Fast\n计费档位：Fast',
       ariaLabel: '上游请求档位：Fast，计费档位：Fast',
     })
