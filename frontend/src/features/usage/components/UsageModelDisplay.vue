@@ -9,7 +9,7 @@
   >
     <div
       class="flex min-w-0 max-w-full items-center gap-1"
-      :class="modelRowClass"
+      :class="[modelRowClass, actualModel ? 'flex-wrap' : '']"
     >
       <span
         class="min-w-0 truncate"
@@ -17,12 +17,10 @@
         data-usage-model-source
       >{{ record.model }}</span>
       <template v-if="actualModel">
-        <span class="shrink-0 text-muted-foreground/70">-&gt;</span>
         <span
-          class="min-w-0 truncate"
-          :class="modelClass"
+          class="order-last basis-full min-w-0 break-all whitespace-normal text-muted-foreground"
           data-usage-model-target
-        >{{ actualModel }}</span>
+        ><span class="mr-1">-&gt;</span>{{ actualModel }}</span>
       </template>
       <template v-if="!shouldStackBadges">
         <Badge
@@ -71,7 +69,7 @@ import { Badge } from '@/components/ui'
 import { isCyberPolicyError } from '../utils/cyberError'
 import { formatServiceTierFact } from '../utils/service-tier'
 
-type ModelBadgeKey = 'compact' | 'reasoning' | 'fast' | 'cyber'
+type ModelBadgeKey = 'compact' | 'reasoning' | 'fast' | 'cyber' | 'reasoning_tokens'
 
 interface ModelBadgePresentation {
   key: ModelBadgeKey
@@ -90,6 +88,7 @@ interface UsageModelDisplayRecord {
   requested_reasoning_effort?: string | null
   reasoning_effort?: string | null
   service_tier?: string | null
+  reasoning_tokens?: number
   error_message?: string | null
 }
 
@@ -100,12 +99,18 @@ const props = withDefaults(defineProps<{
   context?: 'usage' | 'detail'
   cyber?: boolean | null
   stackFullWidth?: boolean
+  showServiceTierBadge?: boolean
+  showCyberBadge?: boolean
+  showReasoningBadge?: boolean
 }>(), {
   modelClass: '',
   modelRowClass: '',
   context: 'usage',
   cyber: null,
   stackFullWidth: false,
+  showServiceTierBadge: true,
+  showCyberBadge: true,
+  showReasoningBadge: true,
 })
 
 const actualModel = computed(() => {
@@ -138,7 +143,7 @@ const modelBadges = computed<ModelBadgePresentation[]>(() => {
       ariaLabel: '会话压缩',
     })
   }
-  if (reasoningLabel.value) {
+  if (props.showReasoningBadge && reasoningLabel.value) {
     badges.push({
       key: 'reasoning',
       label: reasoningLabel.value,
@@ -149,36 +154,51 @@ const modelBadges = computed<ModelBadgePresentation[]>(() => {
     })
   }
 
-  if (formatServiceTierFact(props.record.service_tier) === 'Fast') {
+  if (props.showServiceTierBadge && formatServiceTierFact(props.record.service_tier) === 'Fast') {
     badges.push({
       key: 'fast',
       label: 'Fast',
       variant: 'outline-transparent',
-      className: 'text-amber-700 dark:text-amber-300',
+      className: 'text-blue-500 dark:text-blue-300',
       title: '上游请求档位：Fast\n计费档位：Fast',
       ariaLabel: '上游请求档位：Fast，计费档位：Fast',
     })
   }
 
-  if (props.cyber ?? isCyberPolicyError(props.record.error_message)) {
+  if (props.showCyberBadge && (props.cyber ?? isCyberPolicyError(props.record.error_message))) {
     badges.push({
       key: 'cyber',
       label: 'Cyber',
       variant: 'outline',
-      className: 'border-primary/30 bg-primary/5 text-rose-600 dark:text-rose-300',
+      className: 'border-primary/30 bg-primary/5 text-rose-500 dark:text-rose-300',
       title: '上游 Cyber Policy 拒绝',
       ariaLabel: '上游 Cyber Policy 拒绝',
+    })
+  }
+  if (typeof props.record.reasoning_tokens === 'number' && props.record.reasoning_tokens > 0) {
+    badges.push({
+      key: 'reasoning_tokens',
+      label: `推理 ${formatCompactTokens(props.record.reasoning_tokens)}`,
+      variant: 'outline-transparent',
+      className: 'text-muted-foreground',
+      title: `推理 Token 数：${props.record.reasoning_tokens}`,
+      ariaLabel: `推理 Token 数：${props.record.reasoning_tokens}`,
     })
   }
   return badges
 })
 
 const shouldStackBadges = computed(() => (
-  actualModel.value !== null || modelBadges.value.length >= 3
+  actualModel.value === null && modelBadges.value.length >= 3
 ))
 
 function normalizeText(value: string | null | undefined): string | null {
   const normalized = value?.trim()
   return normalized || null
+}
+
+function formatCompactTokens(value: number): string {
+  if (value < 1000) return `${value} Tokens`
+  return `${(value / 1000).toFixed(value >= 10000 ? 0 : 1)}K Tokens`
 }
 </script>

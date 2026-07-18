@@ -165,19 +165,21 @@ describe('RequestDetailDrawer settlement pricing', () => {
       expect(document.body.querySelector('[data-request-detail-model-badge="cyber"]')?.textContent)
         .toContain('Cyber')
       const modelLayout = document.body.querySelector(
-        '[data-request-detail-model-layout="stacked"]',
+        '[data-request-detail-model-layout="inline"]',
       )
-      expect(modelLayout?.firstElementChild?.textContent).toContain('gpt-5')
-      expect(modelLayout?.firstElementChild?.textContent).toContain('->')
-      expect(modelLayout?.firstElementChild?.textContent).toContain('gpt-5.1')
-      expect(modelLayout?.firstElementChild?.querySelector('[data-request-detail-model-badge]'))
-        .toBeNull()
-      const modelBadgesRow = modelLayout?.querySelector(
-        '[data-request-detail-model-badges-row]',
-      )
-      expect(modelBadgesRow?.textContent).toContain('xhigh -> max')
-      expect(modelBadgesRow?.textContent).toContain('Fast')
-      expect(modelBadgesRow?.textContent).toContain('Cyber')
+      const modelRow = modelLayout?.firstElementChild
+      expect(modelRow?.textContent).toContain('gpt-5')
+      expect(modelRow?.textContent).toContain('->')
+      expect(modelRow?.textContent).toContain('gpt-5.1')
+      expect(modelRow?.querySelector('[data-usage-model-target]')?.classList.contains('basis-full'))
+        .toBe(true)
+      expect(modelRow?.querySelector('[data-request-detail-model-badge="reasoning"]')?.textContent)
+        .toContain('xhigh -> max')
+      expect(modelRow?.querySelector('[data-request-detail-model-badge="fast"]')?.textContent)
+        .toContain('Fast')
+      expect(modelRow?.querySelector('[data-request-detail-model-badge="cyber"]')?.textContent)
+        .toContain('Cyber')
+      expect(modelLayout?.querySelector('[data-request-detail-model-badges-row]')).toBeNull()
       const serviceTierFacts = document.body.querySelector('[data-testid="service-tier-facts"]')
       expect([...serviceTierFacts?.querySelectorAll('dt') ?? []].map(node => node.textContent?.trim()))
         .toEqual(['上游请求层级', '计费层级'])
@@ -359,7 +361,7 @@ describe('RequestDetailDrawer settlement pricing', () => {
     await vi.waitFor(() => {
       expect(apiMocks.getRequestDetail).toHaveBeenCalledTimes(1)
       expect(document.body.querySelector('[data-usage-model-target]')?.textContent?.trim())
-        .toBe('gpt-5.1')
+        .toBe('->gpt-5.1')
       expect(document.body.querySelector('[data-request-detail-model-badge="reasoning"]')?.textContent?.trim())
         .toBe('xhigh -> max')
       expect(document.body.querySelector('[data-request-detail-model-badge="fast"]')).toBeNull()
@@ -414,7 +416,7 @@ describe('RequestDetailDrawer settlement pricing', () => {
 
     await vi.waitFor(() => {
       expect(document.body.querySelector('[data-usage-model-target]')?.textContent?.trim())
-        .toBe('gpt-5.1-2026-07-17')
+        .toBe('->gpt-5.1-2026-07-17')
     })
   })
 
