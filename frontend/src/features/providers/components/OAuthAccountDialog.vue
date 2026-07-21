@@ -947,6 +947,7 @@ const isOpen = computed(() => props.open)
 const isKiroProvider = computed(() => (props.providerType || '').toLowerCase() === 'kiro')
 const isGrokProvider = computed(() => (props.providerType || '').toLowerCase() === 'grok')
 const isWindsurfProvider = computed(() => (props.providerType || '').toLowerCase() === 'windsurf')
+const isCodexProvider = computed(() => (props.providerType || '').toLowerCase() === 'codex')
 const isDeviceBrowserProvider = computed(() => isKiroProvider.value || isWindsurfProvider.value)
 const showAuthorizationMode = computed(() => !isGrokProvider.value)
 const defaultMode = computed<DialogMode>(() => (isGrokProvider.value ? 'import' : 'oauth'))
@@ -1696,6 +1697,43 @@ function handleImportInputError(payload: { message: string; title?: string }) {
   showError(legacyT(payload.message), payload.title ? legacyT(payload.title) : undefined)
 }
 
+function isObjectRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isCodexAgentIdentityObject(root: Record<string, unknown>): boolean {
+  const nestedValue = root.agent_identity ?? root.agentIdentity
+  const nested = isObjectRecord(nestedValue) ? nestedValue : null
+  const authMode = normalizeStringField(root.auth_mode)
+    ?? normalizeStringField(root.authMode)
+    ?? (nested
+      ? normalizeStringField(nested.auth_mode) ?? normalizeStringField(nested.authMode)
+      : undefined)
+  if (authMode?.toLowerCase() === 'agentidentity') return true
+
+  return nested !== null
+    && Boolean(
+      normalizeStringField(nested.agent_runtime_id) ?? normalizeStringField(nested.agentRuntimeId),
+    )
+    && Boolean(
+      normalizeStringField(nested.agent_private_key) ?? normalizeStringField(nested.agentPrivateKey),
+    )
+}
+
+function requiresCodexBatchImport(credentials: string): boolean {
+  if (!isCodexProvider.value) return false
+
+  try {
+    const parsed: unknown = JSON.parse(credentials)
+    if (!isObjectRecord(parsed)) return false
+
+    return isCodexAgentIdentityObject(parsed)
+      || normalizeStringField(parsed.type)?.toLowerCase() === 'sub2api-data'
+  } catch {
+    return false
+  }
+}
+
 function setWindsurfImportMethod(method: WindsurfImportMethod) {
   if (!isWindsurfProvider.value || importing.value) return
   windsurfImportMethod.value = method
@@ -1754,8 +1792,12 @@ async function handleImport() {
   let keepImporting = false
   try {
     const proxyNodeId = selectedProxyNodeId.value || undefined
-    // Kiro 的单条 JSON 凭据也必须走 batch-import 路径，后端需要完整 auth_config。
-    if (isKiroProvider.value || normalizedCredentials.isBatch) {
+    // Kiro, Codex Agent Identity, and sub2api exports need their full JSON on the batch path.
+    if (
+      isKiroProvider.value
+      || normalizedCredentials.isBatch
+      || requiresCodexBatchImport(normalizedCredentials.credentials)
+    ) {
       const task = await startBatchImportOAuthTask(props.providerId, normalizedCredentials.credentials, proxyNodeId)
       importTask.value = {
         task_id: task.task_id,

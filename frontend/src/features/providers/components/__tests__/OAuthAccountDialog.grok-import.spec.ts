@@ -388,6 +388,74 @@ describe('OAuthAccountDialog Grok import', () => {
     }))
   })
 
+  it('sends a single Codex Agent Identity auth JSON through batch import', async () => {
+    const root = mountDialog('codex')
+    await settle()
+
+    getButton(root, '导入授权')?.click()
+    await settle()
+
+    const credentials = JSON.stringify({
+      auth_mode: 'agentIdentity',
+      agent_identity: {
+        agent_runtime_id: 'runtime-1',
+        agent_private_key: 'base64-pkcs8-key',
+      },
+    })
+    const textarea = getImportTextarea(root)
+    textarea.value = credentials
+    textarea.dispatchEvent(new Event('input'))
+    await settle()
+
+    getExactButton(root, '导入')?.click()
+    await settle()
+
+    expect(endpointMocks.startBatchImportOAuthTask).toHaveBeenCalledWith(
+      'provider-1',
+      credentials,
+      undefined,
+    )
+    expect(endpointMocks.importProviderRefreshToken).not.toHaveBeenCalled()
+  })
+
+  it('sends a complete sub2api Agent Identity export through batch import', async () => {
+    const root = mountDialog('codex')
+    await settle()
+
+    getButton(root, '导入授权')?.click()
+    await settle()
+
+    const credentials = JSON.stringify({
+      type: 'sub2api-data',
+      version: 1,
+      accounts: [{
+        name: 'agent@example.com',
+        platform: 'openai',
+        type: 'oauth',
+        credentials: {
+          auth_mode: 'agentIdentity',
+          agent_runtime_id: 'runtime-1',
+          agent_private_key: 'base64-pkcs8-key',
+          task_id: 'task-1',
+        },
+      }],
+    })
+    const textarea = getImportTextarea(root)
+    textarea.value = credentials
+    textarea.dispatchEvent(new Event('input'))
+    await settle()
+
+    getExactButton(root, '导入')?.click()
+    await settle()
+
+    expect(endpointMocks.startBatchImportOAuthTask).toHaveBeenCalledWith(
+      'provider-1',
+      credentials,
+      undefined,
+    )
+    expect(endpointMocks.importProviderRefreshToken).not.toHaveBeenCalled()
+  })
+
   it('keeps Grok multiline token import on the batch task path', async () => {
     const root = mountDialog('grok')
     await settle()
