@@ -438,20 +438,22 @@ describe('OAuthAccountDialog Grok import', () => {
     expect(endpointMocks.importProviderRefreshToken).not.toHaveBeenCalled()
   })
 
-  it('creates Codex Agent Identity from a Session Token only when enabled', async () => {
+  it('shows a dedicated Codex Agent Identity mode and creates from a Session Token', async () => {
     const root = mountDialog('codex')
     await settle()
 
-    getButton(root, '导入授权')?.click()
+    expect(getExactButton(root, '获取授权')).toBeTruthy()
+    expect(getExactButton(root, '导入授权')).toBeTruthy()
+    expect(getExactButton(root, '创建 Agent Identity')).toBeTruthy()
+
+    getExactButton(root, '创建 Agent Identity')?.click()
     await settle()
 
-    const sessionTokenSwitch = root.querySelector<HTMLButtonElement>('button[role="switch"]')
-    expect(sessionTokenSwitch).toBeTruthy()
-    expect(sessionTokenSwitch?.getAttribute('aria-checked')).toBe('false')
-    sessionTokenSwitch?.click()
-    await settle()
-
-    const textarea = getImportTextarea(root)
+    const textarea = root.querySelector<HTMLTextAreaElement>(
+      'textarea[placeholder="粘贴 ChatGPT Session Token（JWT）"]',
+    )
+    expect(textarea).toBeTruthy()
+    if (!textarea) throw new Error('Expected Agent Identity Session Token textarea to exist')
     textarea.value = 'session-token-for-test-only'
     textarea.dispatchEvent(new Event('input'))
     await settle()
@@ -465,6 +467,15 @@ describe('OAuthAccountDialog Grok import', () => {
       proxy_node_id: undefined,
     })
     expect(endpointMocks.startBatchImportOAuthTask).not.toHaveBeenCalled()
+  })
+
+  it('keeps Agent Identity creation unavailable for non-Codex providers', async () => {
+    const root = mountDialog('openai')
+    await settle()
+
+    expect(getExactButton(root, '获取授权')).toBeTruthy()
+    expect(getExactButton(root, '导入授权')).toBeTruthy()
+    expect(getExactButton(root, '创建 Agent Identity')).toBeFalsy()
   })
 
   it('sends a complete sub2api Agent Identity export through batch import', async () => {

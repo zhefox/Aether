@@ -62,27 +62,41 @@
       <!-- Tab 切换 -->
       <div
         v-if="showAuthorizationMode"
-        class="flex rounded-lg border border-border p-0.5 bg-muted/30"
+        class="grid rounded-lg border border-border p-0.5 bg-muted/30"
+        :class="isCodexProvider ? 'grid-cols-3' : 'grid-cols-2'"
       >
         <button
-          class="flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-all"
+          class="min-w-0 min-h-8 px-2 py-1.5 text-xs font-medium leading-4 rounded-md transition-all disabled:cursor-not-allowed disabled:opacity-60"
           :class="[
             mode === 'oauth'
               ? 'bg-background text-foreground shadow-sm'
               : 'text-muted-foreground hover:text-foreground',
           ]"
+          :disabled="importing || creatingAgentIdentity"
           @click="switchMode('oauth')"
         >
           {{ authorizationModeLabel }}
         </button>
         <button
-          class="flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-all"
+          class="min-w-0 min-h-8 px-2 py-1.5 text-xs font-medium leading-4 rounded-md transition-all disabled:cursor-not-allowed disabled:opacity-60"
           :class="mode === 'import'
             ? 'bg-background text-foreground shadow-sm'
             : 'text-muted-foreground hover:text-foreground'"
+          :disabled="importing || creatingAgentIdentity"
           @click="switchMode('import')"
         >
           {{ importModeLabel }}
+        </button>
+        <button
+          v-if="isCodexProvider"
+          class="min-w-0 min-h-8 px-2 py-1.5 text-xs font-medium leading-4 rounded-md transition-all disabled:cursor-not-allowed disabled:opacity-60"
+          :class="mode === 'agent_identity'
+            ? 'bg-background text-foreground shadow-sm'
+            : 'text-muted-foreground hover:text-foreground'"
+          :disabled="importing || creatingAgentIdentity"
+          @click="switchMode('agent_identity')"
+        >
+          {{ legacyT('创建 Agent Identity') }}
         </button>
       </div>
 
@@ -644,39 +658,7 @@
           </div>
 
           <template v-else>
-            <div
-              v-if="isCodexProvider"
-              class="rounded-lg border border-border bg-muted/20 px-3 py-2.5"
-            >
-              <div class="flex items-center justify-between gap-3">
-                <div class="min-w-0">
-                  <p class="text-xs font-medium">
-                    {{ legacyT('使用 Session Token 创建 Agent Identity（实验）') }}
-                  </p>
-                  <p class="mt-0.5 text-[11px] text-muted-foreground">
-                    {{ legacyT('仅用于一次性注册，成功后不会保存 Token。') }}
-                  </p>
-                </div>
-                <Switch
-                  v-model="useSessionTokenAgentIdentity"
-                  :disabled="importing"
-                  :aria-label="legacyT('使用 Session Token 创建 Agent Identity（实验）')"
-                />
-              </div>
-            </div>
-
-            <Textarea
-              v-if="isCodexSessionTokenAgentIdentityImport"
-              v-model="importText"
-              :disabled="importing"
-              :placeholder="legacyT('粘贴 ChatGPT Session Token（JWT）')"
-              class="min-h-[200px] text-xs font-mono break-all !rounded-xl"
-              autocomplete="off"
-              spellcheck="false"
-            />
-
             <JsonImportInput
-              v-else
               v-model="importText"
               :disabled="importing"
               :reset-key="importInputResetKey"
@@ -736,6 +718,30 @@
             </div>
           </div>
         </div>
+
+        <!-- ===== 创建 Agent Identity ===== -->
+        <div
+          v-if="isCodexProvider"
+          class="flex flex-col gap-3 justify-center transition-opacity duration-150"
+          :class="mode === 'agent_identity' ? 'opacity-100' : 'opacity-0 pointer-events-none'"
+        >
+          <div class="space-y-1">
+            <label class="text-xs font-medium">
+              {{ legacyT('ChatGPT Session Token') }}
+            </label>
+            <p class="text-[11px] text-muted-foreground">
+              {{ legacyT('仅用于一次性注册，成功后不会保存 Token。') }}
+            </p>
+          </div>
+          <Textarea
+            v-model="agentIdentitySessionToken"
+            :disabled="creatingAgentIdentity"
+            :placeholder="legacyT('粘贴 ChatGPT Session Token（JWT）')"
+            class="min-h-[230px] text-xs font-mono break-all !rounded-xl"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
       </div>
     </div>
 
@@ -767,13 +773,20 @@
       >
         {{ importButtonText }}
       </Button>
+      <Button
+        v-if="mode === 'agent_identity'"
+        :disabled="!canCreateAgentIdentity"
+        @click="handleCreateAgentIdentity"
+      >
+        {{ creatingAgentIdentity ? legacyT('创建中...') : legacyT('创建并导入 Agent Identity') }}
+      </Button>
     </template>
   </Dialog>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
-import { Dialog, Button, Textarea, Popover, PopoverTrigger, PopoverContent, Switch } from '@/components/ui'
+import { Dialog, Button, Textarea, Popover, PopoverTrigger, PopoverContent } from '@/components/ui'
 import {
   ComboboxAnchor,
   ComboboxContent,
@@ -878,7 +891,7 @@ function localizedApiError(error: unknown, fallback: string): string {
 }
 
 // 模式
-type DialogMode = 'oauth' | 'import'
+type DialogMode = 'oauth' | 'import' | 'agent_identity'
 const mode = ref<DialogMode>((props.providerType || '').toLowerCase() === 'grok' ? 'import' : 'oauth')
 type WindsurfImportMethod = 'email_password' | 'token_json'
 
@@ -974,7 +987,9 @@ const windsurfImportMethod = ref<WindsurfImportMethod>('email_password')
 const windsurfEmail = ref('')
 const windsurfPassword = ref('')
 const windsurfAccountName = ref('')
-const useSessionTokenAgentIdentity = ref(false)
+const agentIdentitySessionToken = ref('')
+const creatingAgentIdentity = ref(false)
+let agentIdentityRequestId = 0
 
 const isOpen = computed(() => props.open)
 
@@ -1060,6 +1075,12 @@ const canImport = computed(() => {
   return importText.value.trim().length > 0 && !importing.value
 })
 
+const canCreateAgentIdentity = computed(() =>
+  isCodexProvider.value
+  && agentIdentitySessionToken.value.trim().length > 0
+  && !creatingAgentIdentity.value
+)
+
 const importModeLabel = computed(() => legacyT(isGrokProvider.value ? '导入账号' : '导入授权'))
 const importButtonLabel = computed(() => legacyT(isGrokProvider.value ? '导入账号' : '导入'))
 const importDropTitle = computed(() => (
@@ -1099,18 +1120,11 @@ const proxyUsageDescription = computed(() => {
 const isWindsurfEmailPasswordImport = computed(() =>
   isWindsurfProvider.value && windsurfImportMethod.value === 'email_password'
 )
-const isCodexSessionTokenAgentIdentityImport = computed(() =>
-  isCodexProvider.value && useSessionTokenAgentIdentity.value
-)
-
 const importButtonText = computed(() => {
   if (importing.value) {
     return importTask.value && !isWindsurfEmailPasswordImport.value
       ? (isEnglishLocale() ? `Importing ${importTask.value.progress_percent}%` : `导入中 ${importTask.value.progress_percent}%`)
       : legacyT('导入中...')
-  }
-  if (isCodexSessionTokenAgentIdentityImport.value) {
-    return legacyT('创建并导入 Agent Identity')
   }
   return isWindsurfEmailPasswordImport.value ? legacyT('登录并导入') : importButtonLabel.value
 })
@@ -1162,7 +1176,7 @@ function getImportTaskStatusText(status: OAuthBatchImportTaskStatus): string {
 }
 
 function getOAuthSuccessMessage(
-  action: '授权' | '导入',
+  action: '授权' | '导入' | '创建',
   options?: { email?: string | null; replaced?: boolean }
 ): string {
   const email = typeof options?.email === 'string' ? options.email.trim() : ''
@@ -1352,6 +1366,7 @@ function resetForm() {
   oauthInitRequestId += 1
   oauthCompleteRequestId += 1
   deviceAuthRequestId += 1
+  agentIdentityRequestId += 1
   oauth.value = createInitialOAuthState()
   stopImportPolling()
   stopDevicePolling()
@@ -1368,7 +1383,8 @@ function resetForm() {
   windsurfEmail.value = ''
   windsurfPassword.value = ''
   windsurfAccountName.value = ''
-  useSessionTokenAgentIdentity.value = false
+  agentIdentitySessionToken.value = ''
+  creatingAgentIdentity.value = false
   proxyPopoverOpen.value = false
   selectedProxyNodeId.value = ''
   mode.value = defaultMode.value
@@ -1377,6 +1393,8 @@ function resetForm() {
 function switchMode(newMode: DialogMode) {
   if (mode.value === newMode) return
   if (newMode === 'oauth' && !showAuthorizationMode.value) return
+  if (newMode === 'agent_identity' && !isCodexProvider.value) return
+  if (importing.value || creatingAgentIdentity.value) return
 
   mode.value = newMode
   if (newMode === 'oauth') {
@@ -1823,26 +1841,6 @@ async function handleImport() {
     return
   }
 
-  if (isCodexSessionTokenAgentIdentityImport.value) {
-    importing.value = true
-    try {
-      const result = await importProviderRefreshToken(props.providerId, {
-        session_token: inputText,
-        create_agent_identity_from_session_token: true,
-        proxy_node_id: selectedProxyNodeId.value || undefined,
-      })
-      success(getOAuthSuccessMessage('导入', result))
-      emit('saved')
-      handleClose()
-    } catch (err: unknown) {
-      const errorMessage = localizedApiError(err, '创建 Agent Identity 失败')
-      showError(errorMessage, legacyT('错误'))
-    } finally {
-      importing.value = false
-    }
-    return
-  }
-
   const normalizedCredentials = normalizeBatchImportCredentials(inputText)
   if (!normalizedCredentials.ok) {
     showError(legacyT(normalizedCredentials.message), legacyT('格式错误'))
@@ -1903,6 +1901,34 @@ async function handleImport() {
   } finally {
     if (!keepImporting) {
       importing.value = false
+    }
+  }
+}
+
+async function handleCreateAgentIdentity() {
+  if (!canCreateAgentIdentity.value || !props.providerId) return
+
+  const sessionToken = agentIdentitySessionToken.value.trim()
+  const requestId = ++agentIdentityRequestId
+  creatingAgentIdentity.value = true
+  try {
+    const result = await importProviderRefreshToken(props.providerId, {
+      session_token: sessionToken,
+      create_agent_identity_from_session_token: true,
+      proxy_node_id: selectedProxyNodeId.value || undefined,
+    })
+    if (requestId !== agentIdentityRequestId) return
+
+    success(getOAuthSuccessMessage('创建', result))
+    emit('saved')
+    handleClose()
+  } catch (err: unknown) {
+    if (requestId !== agentIdentityRequestId) return
+    const errorMessage = localizedApiError(err, '创建 Agent Identity 失败')
+    showError(errorMessage, legacyT('错误'))
+  } finally {
+    if (requestId === agentIdentityRequestId) {
+      creatingAgentIdentity.value = false
     }
   }
 }
@@ -2113,6 +2139,9 @@ watch(
     if (props.open && !showAuthorizationMode.value) {
       mode.value = 'import'
       return
+    }
+    if (props.open && mode.value === 'agent_identity' && !isCodexProvider.value) {
+      mode.value = defaultMode.value
     }
     if (props.open && isWindsurfProvider.value && mode.value === 'oauth') {
       device.value.auth_type = ['default', 'google', 'github'].includes(device.value.auth_type)
