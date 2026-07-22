@@ -444,9 +444,9 @@ describe('OAuthAccountDialog Grok import', () => {
 
     expect(getExactButton(root, '获取授权')).toBeTruthy()
     expect(getExactButton(root, '导入授权')).toBeTruthy()
-    expect(getExactButton(root, '创建 Agent Identity')).toBeTruthy()
+    expect(getExactButton(root, 'Agent Identity')).toBeTruthy()
 
-    getExactButton(root, '创建 Agent Identity')?.click()
+    getExactButton(root, 'Agent Identity')?.click()
     await settle()
 
     const textarea = root.querySelector<HTMLTextAreaElement>(
@@ -475,7 +475,7 @@ describe('OAuthAccountDialog Grok import', () => {
 
     expect(getExactButton(root, '获取授权')).toBeTruthy()
     expect(getExactButton(root, '导入授权')).toBeTruthy()
-    expect(getExactButton(root, '创建 Agent Identity')).toBeFalsy()
+    expect(getExactButton(root, 'Agent Identity')).toBeFalsy()
   })
 
   it('sends a complete sub2api Agent Identity export through batch import', async () => {

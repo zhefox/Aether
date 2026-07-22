@@ -1582,7 +1582,7 @@ const legacyExactEnglishMessages: Record<string, string> = {
   '浏览器登录': 'Browser sign-in',
   '设备授权': 'Device authorization',
   '导入授权': 'Import authorization',
-  '创建 Agent Identity': 'Create Agent Identity',
+  'Agent Identity': 'Agent Identity',
   '创建并导入 Agent Identity': 'Create and import Agent Identity',
   '创建 Agent Identity 失败': 'Failed to create Agent Identity',
   'ChatGPT Session Token': 'ChatGPT Session Token',

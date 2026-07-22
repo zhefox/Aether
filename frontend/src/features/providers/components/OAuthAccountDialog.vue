@@ -96,7 +96,7 @@
           :disabled="importing || creatingAgentIdentity"
           @click="switchMode('agent_identity')"
         >
-          {{ legacyT('创建 Agent Identity') }}
+          {{ legacyT('Agent Identity') }}
         </button>
       </div>
 
