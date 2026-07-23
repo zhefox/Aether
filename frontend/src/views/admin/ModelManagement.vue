@@ -103,16 +103,8 @@
               >
                 <TableCell>
                   <div>
-                    <div class="flex items-center gap-2">
-                      <span class="font-medium">{{ model.display_name }}</span>
-                      <span
-                        v-if="getModelPricingPreference(model)"
-                        class="inline-flex h-5 shrink-0 items-center gap-1 rounded-md bg-primary/8 px-1.5 text-[10px] font-medium text-primary"
-                        :title="getModelPricingPreferenceTitle(model)"
-                      >
-                        <RefreshCw class="h-2.5 w-2.5" />
-                        自动价格
-                      </span>
+                    <div class="font-medium">
+                      {{ model.display_name }}
                     </div>
                     <div class="text-xs text-muted-foreground flex items-center gap-1">
                       <span>{{ model.name }}</span>
@@ -253,14 +245,6 @@
                   >
                     <Copy class="w-3 h-3" />
                   </button>
-                </div>
-                <div
-                  v-if="getModelPricingPreference(model)"
-                  class="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-primary"
-                  :title="getModelPricingPreferenceTitle(model)"
-                >
-                  <RefreshCw class="h-2.5 w-2.5" />
-                  自动价格 · {{ getModelPricingPreference(model)?.provider_name }}
                 </div>
               </div>
               <div
@@ -486,7 +470,7 @@
     <Dialog
       :model-value="batchManageDialogOpen"
       title="快速筛选与批量操作"
-      description="按在线定价来源快速筛选，并批量同步价格或删除模型"
+      description="默认按每个模型上次选择的在线来源同步，也可手动指定统一来源"
       :icon="ListChecks"
       size="2xl"
       @update:model-value="batchManageDialogOpen = $event"
@@ -505,12 +489,15 @@
             </div>
             <Select
               v-model="batchPricingProviderId"
-              :disabled="batchManageOnlineLoading || batchPricingProviderOptions.length === 0"
+              :disabled="batchManageOnlineLoading"
             >
               <SelectTrigger class="h-9 text-xs">
                 <SelectValue placeholder="选择在线价格来源" />
               </SelectTrigger>
               <SelectContent>
+                <SelectItem :value="REMEMBERED_PRICING_PROVIDER_ID">
+                  上次选择（按模型）
+                </SelectItem>
                 <SelectItem
                   v-for="provider in batchPricingProviderOptions"
                   :key="provider.providerId"
@@ -591,6 +578,10 @@
                     </div>
                     <div class="flex items-center gap-2 shrink-0">
                       <span
+                        class="max-w-28 truncate text-[10px] text-muted-foreground"
+                        :title="getBatchPricingSourceLabel(model)"
+                      >{{ getBatchPricingSourceLabel(model) }}</span>
+                      <span
                         class="inline-flex items-center gap-1.5 text-[11px] font-medium"
                         :class="getBatchPricingStateClass(model)"
                         :title="getBatchPricingStateDescription(model)"
@@ -633,12 +624,13 @@
         </div>
       </template>
       <template #footer>
-        <div class="flex items-center justify-between w-full">
-          <p class="text-xs text-muted-foreground">
+        <div class="flex w-full min-w-0 flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <p class="min-w-0 break-keep text-pretty text-xs leading-5 text-muted-foreground lg:flex-1">
             {{ batchManageSelectionSummary }}
           </p>
-          <div class="flex items-center gap-2">
+          <div class="flex w-full min-w-0 flex-col gap-2 sm:flex-row lg:w-auto lg:shrink-0">
             <Button
+              class="w-full whitespace-nowrap sm:flex-1 lg:w-auto lg:flex-none"
               :disabled="selectedBatchPriceSyncPlan.syncable.length === 0 || submittingBatchManage"
               @click="confirmBatchSyncPrices"
             >
@@ -653,6 +645,7 @@
               {{ batchManageAction === 'sync-prices' ? '同步中...' : `同步在线价格 (${selectedBatchPriceSyncPlan.syncable.length})` }}
             </Button>
             <Button
+              class="w-full whitespace-nowrap sm:flex-1 lg:w-auto lg:flex-none"
               variant="destructive"
               :disabled="selectedBatchManageModelIds.size === 0 || submittingBatchManage"
               @click="confirmBatchDeleteModels"
@@ -664,6 +657,7 @@
               {{ batchManageAction === 'delete' ? '删除中...' : '删除选中' }}
             </Button>
             <Button
+              class="w-full whitespace-nowrap sm:flex-1 lg:w-auto lg:flex-none"
               variant="outline"
               @click="batchManageDialogOpen = false"
             >
@@ -740,8 +734,8 @@ import { getModelsDevList, type ModelsDevModelItem } from '@/api/models-dev'
 import {
   buildGlobalModelPriceSyncPlan,
   cloneTieredPricingConfig,
-  readModelsDevPricingPreference,
 } from '@/features/models/components/global-model-form-helpers'
+import { useModelsDevPricingSources } from '@/features/models/composables/useModelsDevPricingSources'
 
 
 interface ModelProviderDisplay {
@@ -768,6 +762,8 @@ interface ModelProviderDisplay {
 
 const { success, error: showError } = useToast()
 const { copyToClipboard } = useClipboard()
+const { getSource: getModelsDevPricingSource, setSource: setModelsDevPricingSource } = useModelsDevPricingSources()
+const REMEMBERED_PRICING_PROVIDER_ID = '__remembered__'
 
 // 状态
 const loading = ref(false)
@@ -819,7 +815,7 @@ const editingProvider = ref<ModelProviderDisplay | null>(null)
 // 批量管理全局模型
 const batchManageDialogOpen = ref(false)
 const batchManageSearchQuery = ref('')
-const batchPricingProviderId = ref('')
+const batchPricingProviderId = ref(REMEMBERED_PRICING_PROVIDER_ID)
 const selectedBatchManageModelIds = ref<Set<string>>(new Set())
 const submittingBatchManage = ref(false)
 const batchManageAction = ref<'sync-prices' | 'delete' | null>(null)
@@ -850,17 +846,6 @@ const editingProviderModel = computed<Model | null>(() => {
 
 // 使用全局确认对话框
 const { confirm, confirmDanger } = useConfirm()
-
-function getModelPricingPreference(model: GlobalModelResponse) {
-  return readModelsDevPricingPreference(model.config)
-}
-
-function getModelPricingPreferenceTitle(model: GlobalModelResponse): string {
-  const preference = getModelPricingPreference(model)
-  return preference
-    ? `自动应用在线价格 · ${preference.provider_name}`
-    : ''
-}
 
 // 从 GlobalModel 的 default_tiered_pricing 获取第一阶梯价格
 function getFirstTierPrice(model: GlobalModelResponse, type: 'input' | 'output'): number | null {
@@ -1395,7 +1380,10 @@ const batchPricingProviderOptions = computed(() => {
       matchCount: 0,
       official: onlineModel.official === true,
     }
-    if (onlineModel.tieredPricing && existingModelNames.has(onlineModel.modelId.trim().toLowerCase())) {
+    if (
+      (onlineModel.tieredPricing || onlineModel.pricingUnsupportedFields?.length)
+      && existingModelNames.has(onlineModel.modelId.trim().toLowerCase())
+    ) {
       provider.matchCount += 1
     }
     providers.set(onlineModel.providerId, provider)
@@ -1414,17 +1402,34 @@ const selectedBatchPricingProvider = computed(() => (
 ))
 
 const batchPricingProviderModels = computed(() => (
-  batchManageOnlineModels.value.filter(model => model.providerId === batchPricingProviderId.value)
+  batchPricingProviderId.value === REMEMBERED_PRICING_PROVIDER_ID
+    ? batchManageOnlineModels.value
+    : batchManageOnlineModels.value.filter(model => model.providerId === batchPricingProviderId.value)
 ))
 
+const rememberedBatchPricingProviderIds = computed(() => {
+  if (batchPricingProviderId.value !== REMEMBERED_PRICING_PROVIDER_ID) return undefined
+  const providerIds = new Map<string, string>()
+  for (const model of batchManageModels.value) {
+    const source = getModelsDevPricingSource(model.id)
+    if (source) providerIds.set(model.id, source.provider_id)
+  }
+  return providerIds
+})
+
 const batchPriceSyncPlan = computed(() => (
-  buildGlobalModelPriceSyncPlan(batchManageModels.value, batchPricingProviderModels.value)
+  buildGlobalModelPriceSyncPlan(
+    batchManageModels.value,
+    batchPricingProviderModels.value,
+    rememberedBatchPricingProviderIds.value,
+  )
 ))
 
 const batchPricingStateByModelId = computed(() => {
-  const states = new Map<string, 'syncable' | 'unchanged' | 'unavailable'>()
+  const states = new Map<string, 'syncable' | 'unchanged' | 'unsupported' | 'unavailable'>()
   for (const entry of batchPriceSyncPlan.value.syncable) states.set(entry.model.id, 'syncable')
   for (const entry of batchPriceSyncPlan.value.unchanged) states.set(entry.model.id, 'unchanged')
+  for (const entry of batchPriceSyncPlan.value.unsupported) states.set(entry.model.id, 'unsupported')
   for (const model of batchPriceSyncPlan.value.unavailable) states.set(model.id, 'unavailable')
   return states
 })
@@ -1434,14 +1439,18 @@ const selectedBatchManageModels = computed(() => (
 ))
 
 const selectedBatchPriceSyncPlan = computed(() => (
-  buildGlobalModelPriceSyncPlan(selectedBatchManageModels.value, batchPricingProviderModels.value)
+  buildGlobalModelPriceSyncPlan(
+    selectedBatchManageModels.value,
+    batchPricingProviderModels.value,
+    rememberedBatchPricingProviderIds.value,
+  )
 ))
 
 const batchManageSelectionSummary = computed(() => {
   const selectedCount = selectedBatchManageModelIds.value.size
-  if (selectedCount === 0) return batchPricingProviderId.value ? '选择模型后执行批量操作' : '请先选择在线价格来源'
+  if (selectedCount === 0) return '选择模型后执行批量操作'
   const plan = selectedBatchPriceSyncPlan.value
-  return `已选择 ${selectedCount} 个 · 可更新 ${plan.syncable.length} · 已一致 ${plan.unchanged.length} · 无在线价格 ${plan.unavailable.length}`
+  return `已选择 ${selectedCount} 个 · 可更新 ${plan.syncable.length} · 已一致 ${plan.unchanged.length} · 不兼容 ${plan.unsupported.length} · 无在线价格 ${plan.unavailable.length}`
 })
 
 function getBatchPricingState(model: GlobalModelResponse) {
@@ -1452,20 +1461,31 @@ function getBatchPricingStateLabel(model: GlobalModelResponse): string {
   const state = getBatchPricingState(model)
   if (state === 'syncable') return '价格可更新'
   if (state === 'unchanged') return '价格一致'
+  if (state === 'unsupported') return '计价不兼容'
   return '无在线价格'
 }
 
 function getBatchPricingStateDescription(model: GlobalModelResponse): string {
-  const providerName = selectedBatchPricingProvider.value?.providerName
-  return providerName
-    ? `${providerName} · ${getBatchPricingStateLabel(model)}`
-    : '请选择在线价格来源'
+  const providerName = getBatchPricingSourceLabel(model)
+  const unsupportedEntry = batchPriceSyncPlan.value.unsupported.find(entry => entry.model.id === model.id)
+  if (unsupportedEntry) {
+    return `${providerName || unsupportedEntry.onlineModel.providerName} · 不支持独立结算 ${formatBatchUnsupportedPricingFields(unsupportedEntry.onlineModel)}`
+  }
+  return `${providerName} · ${getBatchPricingStateLabel(model)}`
+}
+
+function getBatchPricingSourceLabel(model: GlobalModelResponse): string {
+  if (batchPricingProviderId.value !== REMEMBERED_PRICING_PROVIDER_ID) {
+    return selectedBatchPricingProvider.value?.providerName ?? '未选择来源'
+  }
+  return getModelsDevPricingSource(model.id)?.provider_name ?? '未记录来源'
 }
 
 function getBatchPricingStateClass(model: GlobalModelResponse): string {
   const state = getBatchPricingState(model)
   if (state === 'syncable') return 'text-amber-700 dark:text-amber-300'
   if (state === 'unchanged') return 'text-emerald-700 dark:text-emerald-300'
+  if (state === 'unsupported') return 'text-rose-700 dark:text-rose-300'
   return 'text-muted-foreground'
 }
 
@@ -1473,7 +1493,17 @@ function getBatchPricingStateDotClass(model: GlobalModelResponse): string {
   const state = getBatchPricingState(model)
   if (state === 'syncable') return 'bg-amber-500'
   if (state === 'unchanged') return 'bg-emerald-500'
+  if (state === 'unsupported') return 'bg-rose-500'
   return 'bg-muted-foreground/45'
+}
+
+function formatBatchUnsupportedPricingFields(model: ModelsDevModelItem): string {
+  const labels = {
+    reasoning: '推理 Token',
+    input_audio: '输入音频 Token',
+    output_audio: '输出音频 Token',
+  }
+  return (model.pricingUnsupportedFields ?? []).map(field => labels[field]).join('、')
 }
 
 // 批量管理 - 快捷筛选定义
@@ -1492,6 +1522,7 @@ const batchManageShortcuts = computed(() => {
   }[] = [
     { label: '价格可更新', description: '当前价格与所选供应商在线价格不同', filter: m => getBatchPricingState(m) === 'syncable', emphasis: true },
     { label: '价格一致', description: '当前价格与所选供应商在线价格一致', filter: m => getBatchPricingState(m) === 'unchanged' },
+    { label: '计价不兼容', description: '在线来源包含当前计费引擎无法独立结算的价格维度', filter: m => getBatchPricingState(m) === 'unsupported' },
     { label: '无在线价格', description: '所选供应商没有该模型的在线价格', filter: m => getBatchPricingState(m) === 'unavailable' },
     { label: '无提供商', description: '没有关联任何提供商的模型', filter: m => (m.provider_count || 0) === 0 },
     { label: '无活跃提供商', description: '有提供商但没有活跃提供商的模型', filter: m => (m.active_provider_count || 0) === 0 && (m.provider_count || 0) > 0 },
@@ -1542,7 +1573,7 @@ function toggleAllBatchManageModels() {
 // 打开批量管理对话框
 function openBatchManageDialog() {
   batchManageSearchQuery.value = ''
-  batchPricingProviderId.value = ''
+  batchPricingProviderId.value = REMEMBERED_PRICING_PROVIDER_ID
   selectedBatchManageModelIds.value = new Set()
   batchManageDialogOpen.value = true
   void Promise.all([loadBatchManageModels(), loadBatchManageOnlineModels()])
@@ -1580,11 +1611,13 @@ async function runBatchTasksWithConcurrency(
 async function confirmBatchSyncPrices() {
   const plan = selectedBatchPriceSyncPlan.value
   if (plan.syncable.length === 0) return
-  const providerName = selectedBatchPricingProvider.value?.providerName || '所选供应商'
-  const skippedCount = plan.unchanged.length + plan.unavailable.length
+  const providerName = batchPricingProviderId.value === REMEMBERED_PRICING_PROVIDER_ID
+    ? '各模型上次选择的提供商'
+    : selectedBatchPricingProvider.value?.providerName || '所选供应商'
+  const skippedCount = plan.unchanged.length + plan.unsupported.length + plan.unavailable.length
   const confirmed = await confirm({
     title: '批量同步模型价格',
-    message: `将根据 ${providerName} 的在线定价更新 ${plan.syncable.length} 个模型。${skippedCount > 0 ? `另有 ${skippedCount} 个模型因价格一致或无在线价格而跳过。` : ''}\n\n仅更新模型价格，不修改名称、能力或其他配置。`,
+    message: `将根据 ${providerName} 的在线定价更新 ${plan.syncable.length} 个模型。${skippedCount > 0 ? `另有 ${skippedCount} 个模型因价格一致、计价不兼容或无在线价格而跳过。` : ''}\n\n仅更新模型价格，不修改名称、能力或其他配置。`,
     confirmText: '同步价格',
     variant: 'info',
   })
@@ -1605,6 +1638,10 @@ async function confirmBatchSyncPrices() {
         const pricing = cloneTieredPricingConfig(onlinePricing)
         await updateGlobalModel(entry.model.id, { default_tiered_pricing: pricing })
         entry.model.default_tiered_pricing = pricing
+        setModelsDevPricingSource(entry.model.id, {
+          provider_id: entry.onlineModel.providerId,
+          provider_name: entry.onlineModel.providerName,
+        })
         successCount += 1
       } catch (err: unknown) {
         failedIds.add(entry.model.id)
@@ -1672,8 +1709,11 @@ watch(batchPricingProviderId, (value, previousValue) => {
 
 watch([batchPricingProviderOptions, batchManageDialogOpen], ([options, dialogOpen]) => {
   if (!dialogOpen) return
-  if (!options.some(provider => provider.providerId === batchPricingProviderId.value)) {
-    batchPricingProviderId.value = options[0]?.providerId ?? ''
+  if (
+    batchPricingProviderId.value !== REMEMBERED_PRICING_PROVIDER_ID
+    && !options.some(provider => provider.providerId === batchPricingProviderId.value)
+  ) {
+    batchPricingProviderId.value = REMEMBERED_PRICING_PROVIDER_ID
   }
 }, { immediate: true })
 

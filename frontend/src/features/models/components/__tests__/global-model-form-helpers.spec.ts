@@ -8,8 +8,6 @@ import {
   buildGlobalModelUpdatePayload,
   cloneTieredPricingConfig,
   findGlobalModelByName,
-  mergeModelsDevPricingPreference,
-  readModelsDevPricingPreference,
   tieredPricingConfigsEqual,
 } from '../global-model-form-helpers'
 import type { TieredPricingConfig } from '@/api/endpoints/types'
@@ -152,34 +150,73 @@ describe('global model form pricing presets', () => {
     const currentModel = makeGlobalModel('current', 'current-model', 2)
     const staleModel = makeGlobalModel('stale', 'stale-model', 3)
     const unavailableModel = makeGlobalModel('missing', 'missing-model', 4)
+    const unsupportedModel = makeGlobalModel('unsupported', 'unsupported-model', 5)
 
     const plan = buildGlobalModelPriceSyncPlan(
-      [currentModel, staleModel, unavailableModel],
-      [makeOnlineModel('current-model', 2), makeOnlineModel('stale-model', 5)],
+      [currentModel, staleModel, unavailableModel, unsupportedModel],
+      [
+        makeOnlineModel('current-model', 2),
+        makeOnlineModel('stale-model', 5),
+        {
+          ...makeOnlineModel('unsupported-model'),
+          pricingUnsupportedFields: ['reasoning'],
+        },
+      ],
     )
 
     expect(plan.unchanged.map(entry => entry.model.id)).toEqual(['current'])
     expect(plan.syncable.map(entry => entry.model.id)).toEqual(['stale'])
+    expect(plan.unsupported.map(entry => entry.model.id)).toEqual(['unsupported'])
     expect(plan.unavailable.map(model => model.id)).toEqual(['missing'])
   })
 
-  it('persists and removes the online pricing preference without replacing other config', () => {
-    const config = {
-      streaming: true,
-      billing: { video: { price_per_second_by_resolution: { '720p': 0.04 } } },
-    }
-    const enabledConfig = mergeModelsDevPricingPreference(config, {
-      enabled: true,
-      provider_id: 'anthropic',
-      provider_name: 'Anthropic',
+  it('resolves each model from its remembered pricing provider', () => {
+    const makeGlobalModel = (id: string, name: string) => ({
+      id,
+      name,
+      display_name: name,
+      is_active: true,
+      default_tiered_pricing: {
+        tiers: [{ up_to: null, input_price_per_1m: 1, output_price_per_1m: 10 }],
+      },
+      created_at: '2026-07-23T00:00:00Z',
     })
+    const makeOnlineModel = (providerId: string, modelId: string, inputPrice: number) => ({
+      providerId,
+      providerName: providerId,
+      modelId,
+      modelName: modelId,
+      tieredPricing: {
+        tiers: [{ up_to: null, input_price_per_1m: inputPrice, output_price_per_1m: 10 }],
+      },
+    })
+    const openAiModel = makeGlobalModel('openai-model', 'shared-model')
+    const anthropicModel = makeGlobalModel('anthropic-model', 'other-model')
+    const missingSourceModel = makeGlobalModel('missing-source', 'shared-model')
 
-    expect(readModelsDevPricingPreference(enabledConfig)).toEqual({
-      enabled: true,
-      provider_id: 'anthropic',
-      provider_name: 'Anthropic',
-    })
-    expect(enabledConfig).toMatchObject(config)
-    expect(mergeModelsDevPricingPreference(enabledConfig, null)).toEqual(config)
+    const plan = buildGlobalModelPriceSyncPlan(
+      [openAiModel, anthropicModel, missingSourceModel],
+      [
+        makeOnlineModel('anthropic', 'shared-model', 2),
+        makeOnlineModel('openai', 'shared-model', 3),
+        makeOnlineModel('anthropic', 'other-model', 4),
+        makeOnlineModel('openai', 'other-model', 5),
+      ],
+      new Map([
+        [openAiModel.id, 'openai'],
+        [anthropicModel.id, 'anthropic'],
+      ]),
+    )
+
+    expect(plan.syncable.map(entry => [
+      entry.model.id,
+      entry.onlineModel.providerId,
+      entry.onlineModel.tieredPricing?.tiers[0].input_price_per_1m,
+    ])).toEqual([
+      ['openai-model', 'openai', 3],
+      ['anthropic-model', 'anthropic', 4],
+    ])
+    expect(plan.unavailable.map(model => model.id)).toEqual(['missing-source'])
   })
+
 })

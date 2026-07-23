@@ -137,6 +137,11 @@
                         <span>{{ getPricingSyncLabel(item) }}</span>
                       </span>
                       <span
+                        v-if="isRememberedPricingSource(item)"
+                        class="rounded-md bg-primary/8 px-1.5 py-0.5 text-[9px] font-medium text-primary"
+                        title="上次手动导入或同步使用此价格来源"
+                      >上次来源</span>
+                      <span
                         v-if="item.family"
                         class="max-w-[88px] truncate rounded-md bg-muted px-1.5 py-0.5 text-[9px] font-medium text-muted-foreground"
                       >{{ item.family }}</span>
@@ -274,28 +279,23 @@
           v-if="selectedExistingModel"
           class="mb-4 space-y-3 rounded-lg border border-sky-500/20 bg-sky-500/5 p-4"
         >
-          <div class="flex items-start justify-between gap-4">
-            <div>
-              <h4 class="text-sm font-medium">
-                同步在线价格
-              </h4>
-              <p class="mt-1 text-xs text-muted-foreground">
-                仅更新该模型的价格配置，不修改名称、能力或其他设置。
-              </p>
-            </div>
-            <div class="flex shrink-0 items-center gap-2">
-              <Label class="text-xs font-normal">自动应用在线价格</Label>
-              <Switch
-                :model-value="autoApplyOnlinePricing"
-                :disabled="!selectedModel?.tieredPricing && !autoApplyOnlinePricing"
-                aria-label="选择已有模型时自动应用在线价格"
-                @update:model-value="setAutoApplyOnlinePricing"
-              />
-            </div>
+          <div>
+            <h4 class="text-sm font-medium">
+              同步在线价格
+            </h4>
+            <p class="mt-1 text-xs text-muted-foreground">
+              选择在线价格并点击同步后，仅更新该模型的价格配置。
+            </p>
           </div>
 
           <div
-            v-if="!selectedModel?.tieredPricing"
+            v-if="selectedModel?.pricingUnsupportedFields?.length"
+            class="rounded-md border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-800 dark:text-rose-200"
+          >
+            当前计费引擎无法独立结算{{ formatUnsupportedPricingFields(selectedModel.pricingUnsupportedFields) }}，无法同步以避免错误计价。
+          </div>
+          <div
+            v-else-if="!selectedModel?.tieredPricing"
             class="rounded-md border border-amber-500/20 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200"
           >
             在线目录未提供该模型的价格，暂时无法同步。
@@ -333,9 +333,6 @@
               <span class="mt-1 block text-[11px] text-muted-foreground">{{ formatPricingSummary(selectedModel.tieredPricing) }}</span>
             </button>
           </div>
-          <p class="text-[11px] text-muted-foreground">
-            开启后会记住当前在线来源，下次选择该模型时自动载入价格；仍需点击保存后写入。
-          </p>
         </section>
         <form
           class="space-y-5"
@@ -691,7 +688,7 @@ import {
   BrainCircuit, Eye, Wrench, Braces, Database, PackageOpen, CircleCheck
 } from 'lucide-vue-next'
 import {
-  Dialog, Button, Input, Label, Checkbox, Switch,
+  Dialog, Button, Input, Label, Checkbox,
   Tabs, TabsContent, TabsList, TabsTrigger,
 } from '@/components/ui'
 import { useToast } from '@/composables/useToast'
@@ -718,11 +715,10 @@ import {
   buildGlobalModelUpdatePayload,
   cloneTieredPricingConfig,
   findGlobalModelByName,
-  mergeModelsDevPricingPreference,
-  readModelsDevPricingPreference,
   tieredPricingConfigsEqual,
 } from './global-model-form-helpers'
 import { tieredPricingHasImageOutputPricing } from '../utils/tiered-pricing'
+import { useModelsDevPricingSources } from '../composables/useModelsDevPricingSources'
 
 const props = defineProps<{
   open: boolean
@@ -735,6 +731,7 @@ const emit = defineEmits<{
 }>()
 
 const { success, error: showError } = useToast()
+const { getSource, setSource } = useModelsDevPricingSources()
 const submitting = ref(false)
 const tieredPricingEditorRef = ref<InstanceType<typeof TieredPricingEditor> | null>(null)
 const basicInfoSection = ref<HTMLElement | null>(null)
@@ -749,17 +746,22 @@ const expandedProvider = ref<string | null>(null)
 const providerLogoScroller = ref<HTMLElement | null>(null)
 const presetPanelCollapsed = ref(false)
 const billingMode = ref('token')
-const autoApplyOnlinePricing = ref(false)
 const pricingSource = ref<'current' | 'online'>('current')
 
 function getExistingModel(model: ModelsDevModelItem): GlobalModelResponse | undefined {
   return findGlobalModelByName(existingModelsCache.value, model.modelId)
 }
 
-type PricingSyncState = 'same' | 'different' | 'unavailable'
+function isRememberedPricingSource(model: ModelsDevModelItem): boolean {
+  const existingModel = getExistingModel(model)
+  return !!existingModel && getSource(existingModel.id)?.provider_id === model.providerId
+}
+
+type PricingSyncState = 'same' | 'different' | 'unsupported' | 'unavailable'
 
 function getPricingSyncState(model: ModelsDevModelItem): PricingSyncState {
   const existingModel = getExistingModel(model)
+  if (model.pricingUnsupportedFields?.length) return 'unsupported'
   if (!existingModel || !model.tieredPricing) return 'unavailable'
   return tieredPricingConfigsEqual(existingModel.default_tiered_pricing, model.tieredPricing)
     ? 'same'
@@ -770,6 +772,7 @@ function getPricingSyncLabel(model: ModelsDevModelItem): string {
   const state = getPricingSyncState(model)
   if (state === 'same') return '价格一致'
   if (state === 'different') return '价格可更新'
+  if (state === 'unsupported') return '计价不兼容'
   return '无在线价格'
 }
 
@@ -777,7 +780,17 @@ function getPricingSyncIndicatorClass(model: ModelsDevModelItem): string {
   const state = getPricingSyncState(model)
   if (state === 'same') return 'bg-emerald-500'
   if (state === 'different') return 'bg-amber-500'
+  if (state === 'unsupported') return 'bg-rose-500'
   return 'bg-muted-foreground/45'
+}
+
+function formatUnsupportedPricingFields(fields: ModelsDevModelItem['pricingUnsupportedFields']): string {
+  const labels = {
+    reasoning: '推理 Token',
+    input_audio: '输入音频 Token',
+    output_audio: '输出音频 Token',
+  }
+  return (fields ?? []).map(field => labels[field]).join('、')
 }
 
 const selectedExistingModel = computed(() => (
@@ -793,35 +806,26 @@ const onlinePricingMatchesExisting = computed(() => (
   )
 ))
 
-const selectedPricingPreference = computed(() => (
-  readModelsDevPricingPreference(selectedExistingModel.value?.config)
+const selectedPricingSourceMatches = computed(() => (
+  !!selectedExistingModel.value
+  && !!selectedModel.value
+  && getSource(selectedExistingModel.value.id)?.provider_id === selectedModel.value.providerId
 ))
-
-const pricingPreferenceChanged = computed(() => {
-  if (!selectedExistingModel.value || !selectedModel.value) return false
-  const currentPreference = selectedPricingPreference.value
-  if (!autoApplyOnlinePricing.value) return currentPreference !== null
-  return currentPreference?.provider_id !== selectedModel.value.providerId
-})
 
 const canSubmitPriceSync = computed(() => (
   !!selectedExistingModel.value
+  && !!selectedModel.value?.tieredPricing
   && (
-    pricingPreferenceChanged.value
-    || (
-      !!selectedModel.value?.tieredPricing
-      && !onlinePricingMatchesExisting.value
-      && pricingSource.value === 'online'
-    )
+    (onlinePricingMatchesExisting.value && !selectedPricingSourceMatches.value)
+    || (!onlinePricingMatchesExisting.value && pricingSource.value === 'online')
   )
 ))
 
 const priceSyncSubmitLabel = computed(() => {
-  if (pricingPreferenceChanged.value) {
-    return autoApplyOnlinePricing.value ? '保存并同步价格' : '关闭自动应用'
-  }
   if (!selectedModel.value?.tieredPricing) return '暂无在线价格'
-  if (onlinePricingMatchesExisting.value) return '价格已是最新'
+  if (onlinePricingMatchesExisting.value) {
+    return selectedPricingSourceMatches.value ? '价格已是最新' : '保存价格来源'
+  }
   if (pricingSource.value !== 'online') return '请选择在线价格'
   return '同步价格'
 })
@@ -1289,11 +1293,6 @@ function selectModel(model: ModelsDevModelItem) {
   if (existingModel) {
     populateFormFromGlobalModel(existingModel)
     pricingSource.value = 'current'
-    const savedPreference = readModelsDevPricingPreference(existingModel.config)
-    autoApplyOnlinePricing.value = savedPreference?.provider_id === model.providerId
-    if (autoApplyOnlinePricing.value && model.tieredPricing && !onlinePricingMatchesExisting.value) {
-      applyOnlinePricing()
-    }
     presetPanelCollapsed.value = true
     scrollToBasicInformation()
     return
@@ -1359,15 +1358,6 @@ function restoreExistingPricing() {
   pricingSource.value = 'current'
 }
 
-function setAutoApplyOnlinePricing(enabled: boolean) {
-  autoApplyOnlinePricing.value = enabled
-  if (enabled && selectedExistingModel.value && !onlinePricingMatchesExisting.value) {
-    applyOnlinePricing()
-  } else if (!enabled) {
-    restoreExistingPricing()
-  }
-}
-
 // 清除选择（手动填写）
 function clearSelection() {
   imageGenerationExplicitOverride.value = null
@@ -1396,7 +1386,6 @@ function resetForm() {
   expandedProvider.value = null
   presetPanelCollapsed.value = false
   billingMode.value = 'token'
-  autoApplyOnlinePricing.value = false
   pricingSource.value = 'current'
 }
 
@@ -1494,26 +1483,23 @@ async function handleSubmit() {
         showError('请先选择使用在线价格')
         return
       }
-      const preferenceWillChange = pricingPreferenceChanged.value
-      const updateData: Parameters<typeof updateGlobalModel>[1] = {
-        default_tiered_pricing: finalTieredPricing,
+      const pricingWillChange = !tieredPricingConfigsEqual(
+        existingModel.default_tiered_pricing,
+        finalTieredPricing,
+      )
+      if (pricingWillChange) {
+        await updateGlobalModel(existingModel.id, {
+          default_tiered_pricing: finalTieredPricing,
+        })
+        existingModel.default_tiered_pricing = cloneTieredPricingConfig(finalTieredPricing)
       }
-      if (preferenceWillChange && selectedModel.value) {
-        updateData.config = mergeModelsDevPricingPreference(
-          existingModel.config,
-          autoApplyOnlinePricing.value
-            ? {
-                enabled: true,
-                provider_id: selectedModel.value.providerId,
-                provider_name: selectedModel.value.providerName,
-              }
-            : null,
-        )
+      if (selectedModel.value) {
+        setSource(existingModel.id, {
+          provider_id: selectedModel.value.providerId,
+          provider_name: selectedModel.value.providerName,
+        })
       }
-      await updateGlobalModel(existingModel.id, updateData)
-      existingModel.default_tiered_pricing = cloneTieredPricingConfig(finalTieredPricing)
-      if ('config' in updateData) existingModel.config = updateData.config
-      success(preferenceWillChange ? '模型在线价格设置已保存' : '模型价格同步成功')
+      success(pricingWillChange ? '模型价格同步成功' : '模型价格来源已保存')
       reopenPresetPanel()
       emit('success')
       return
@@ -1525,6 +1511,12 @@ async function handleSubmit() {
       const createData = buildGlobalModelCreatePayload(form.value, finalTieredPricing)
       const createdModel = await createGlobalModel(createData)
       existingModelsCache.value.unshift(createdModel)
+      if (selectedModel.value) {
+        setSource(createdModel.id, {
+          provider_id: selectedModel.value.providerId,
+          provider_name: selectedModel.value.providerName,
+        })
+      }
       success('模型创建成功')
       clearSelection()
       emit('success')

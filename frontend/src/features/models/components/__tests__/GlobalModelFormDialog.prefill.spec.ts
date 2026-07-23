@@ -92,6 +92,17 @@ const freshPreset: ModelsDevModelItem = {
   },
 }
 
+const unsupportedPreset: ModelsDevModelItem = {
+  providerId: 'openai',
+  providerName: 'OpenAI',
+  modelId: 'reasoning-priced-model',
+  modelName: 'Reasoning Priced Model',
+  official: true,
+  inputPrice: 1,
+  outputPrice: 2,
+  pricingUnsupportedFields: ['reasoning'],
+}
+
 function buildExistingStaleModel(): GlobalModelResponse {
   return {
     id: 'global-stale-model',
@@ -161,10 +172,11 @@ async function setInput(input: HTMLInputElement | null, value: string) {
 }
 
 beforeEach(() => {
+  localStorage.clear()
   modelsDevMocks.getModelsDevList.mockReset()
-  modelsDevMocks.getModelsDevList.mockResolvedValue([stalePreset, freshPreset])
+  modelsDevMocks.getModelsDevList.mockResolvedValue([stalePreset, freshPreset, unsupportedPreset])
   globalModelMocks.createGlobalModel.mockReset()
-  globalModelMocks.createGlobalModel.mockResolvedValue({})
+  globalModelMocks.createGlobalModel.mockResolvedValue({ id: 'created-model' })
   globalModelMocks.listGlobalModels.mockReset()
   globalModelMocks.listGlobalModels.mockResolvedValue({ models: [], total: 0 })
   globalModelMocks.updateGlobalModel.mockReset()
@@ -258,6 +270,16 @@ describe('GlobalModelFormDialog preset replacement', () => {
         ],
       },
     })
+    expect(JSON.parse(
+      localStorage.getItem('aether:models-dev-pricing-sources:v1') || 'null',
+    )).toMatchObject({
+      models: {
+        'created-model': {
+          provider_id: 'openai',
+          provider_name: 'OpenAI',
+        },
+      },
+    })
     expect(payload.config).not.toHaveProperty('description')
     expect(payload.config).not.toHaveProperty('billing')
     expect(payload.default_tiered_pricing).not.toHaveProperty('processing_tiers')
@@ -305,6 +327,15 @@ describe('GlobalModelFormDialog preset replacement', () => {
 
   it('marks an existing model and updates only its online pricing after confirmation', async () => {
     const existingStaleModel = buildExistingStaleModel()
+    localStorage.setItem('aether:models-dev-pricing-sources:v1', JSON.stringify({
+      version: 1,
+      models: {
+        [existingStaleModel.id]: {
+          provider_id: 'openai',
+          provider_name: 'OpenAI',
+        },
+      },
+    }))
     globalModelMocks.listGlobalModels.mockResolvedValue({
       models: [existingStaleModel],
       total: 1,
@@ -314,12 +345,14 @@ describe('GlobalModelFormDialog preset replacement', () => {
 
     expect(document.body.textContent).toContain('已添加')
     expect(document.body.textContent).toContain('价格可更新')
+    expect(document.body.textContent).toContain('上次来源')
 
     findButton('Stale Model').click()
     await settle()
 
     expect(document.body.textContent).toContain('仅更新该模型的价格配置')
     expect(document.body.querySelector<HTMLInputElement>('[data-testid="tier-input-price"]')?.value).toBe('9')
+    expect(document.body.querySelector('[aria-label="选择已有模型时自动应用在线价格"]')).toBeNull()
     expect(findExactButton('请选择在线价格').disabled).toBe(true)
 
     findButton('使用在线价格').click()
@@ -334,65 +367,39 @@ describe('GlobalModelFormDialog preset replacement', () => {
       existingStaleModel.id,
       { default_tiered_pricing: stalePreset.tieredPricing },
     )
+    expect(JSON.parse(
+      localStorage.getItem('aether:models-dev-pricing-sources:v1') || 'null',
+    )).toMatchObject({
+      models: {
+        [existingStaleModel.id]: {
+          provider_id: 'openai',
+          provider_name: 'OpenAI',
+        },
+      },
+    })
     expect(globalModelMocks.createGlobalModel).not.toHaveBeenCalled()
   })
 
-  it('auto-applies online pricing without submitting it', async () => {
-    const existingStaleModel = buildExistingStaleModel()
+  it('blocks manual updates when the online source has unsupported pricing dimensions', async () => {
+    const existingModel = {
+      ...buildExistingStaleModel(),
+      id: 'reasoning-priced-global-model',
+      name: unsupportedPreset.modelId,
+      display_name: unsupportedPreset.modelName,
+    }
     globalModelMocks.listGlobalModels.mockResolvedValue({
-      models: [existingStaleModel],
+      models: [existingModel],
       total: 1,
     })
     mountDialog()
     await settle()
 
-    findButton('Stale Model').click()
-    await settle()
-    const autoApplySwitch = document.body.querySelector<HTMLButtonElement>(
-      '[role="switch"][aria-label="选择已有模型时自动应用在线价格"]',
-    )
-    if (!autoApplySwitch) throw new Error('Missing automatic online pricing switch')
-    autoApplySwitch.click()
+    expect(document.body.textContent).toContain('计价不兼容')
+    findButton(unsupportedPreset.modelName).click()
     await settle()
 
-    expect(document.body.querySelector<HTMLInputElement>('[data-testid="tier-input-price"]')?.value).toBe('1')
-    expect(findExactButton('保存并同步价格').disabled).toBe(false)
+    expect(document.body.textContent).toContain('无法独立结算推理 Token')
+    expect(findExactButton('暂无在线价格').disabled).toBe(true)
     expect(globalModelMocks.updateGlobalModel).not.toHaveBeenCalled()
-  })
-
-  it('persists the selected online pricing source when automatic apply is enabled', async () => {
-    const existingStaleModel = buildExistingStaleModel()
-    globalModelMocks.listGlobalModels.mockResolvedValue({
-      models: [existingStaleModel],
-      total: 1,
-    })
-    mountDialog()
-    await settle()
-
-    findButton('Stale Model').click()
-    await settle()
-    const autoApplySwitch = document.body.querySelector<HTMLButtonElement>(
-      '[role="switch"][aria-label="选择已有模型时自动应用在线价格"]',
-    )
-    if (!autoApplySwitch) throw new Error('Missing automatic online pricing switch')
-    autoApplySwitch.click()
-    await settle()
-    findExactButton('保存并同步价格').click()
-    await settle()
-
-    expect(globalModelMocks.updateGlobalModel).toHaveBeenCalledWith(
-      existingStaleModel.id,
-      {
-        default_tiered_pricing: stalePreset.tieredPricing,
-        config: {
-          streaming: true,
-          models_dev_pricing: {
-            enabled: true,
-            provider_id: 'openai',
-            provider_name: 'OpenAI',
-          },
-        },
-      },
-    )
   })
 })

@@ -71,67 +71,45 @@ export interface GlobalModelPriceSyncEntry {
 export interface GlobalModelPriceSyncPlan {
   syncable: GlobalModelPriceSyncEntry[]
   unchanged: GlobalModelPriceSyncEntry[]
+  unsupported: GlobalModelPriceSyncEntry[]
   unavailable: GlobalModelResponse[]
-}
-
-export interface ModelsDevPricingPreference {
-  enabled: true
-  provider_id: string
-  provider_name: string
-}
-
-const MODELS_DEV_PRICING_CONFIG_KEY = 'models_dev_pricing'
-
-export function readModelsDevPricingPreference(
-  config: Record<string, unknown> | null | undefined,
-): ModelsDevPricingPreference | null {
-  const value = config?.[MODELS_DEV_PRICING_CONFIG_KEY]
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
-  const preference = value as Record<string, unknown>
-  if (preference.enabled !== true) return null
-  if (typeof preference.provider_id !== 'string' || !preference.provider_id.trim()) return null
-  return {
-    enabled: true,
-    provider_id: preference.provider_id.trim(),
-    provider_name: typeof preference.provider_name === 'string' && preference.provider_name.trim()
-      ? preference.provider_name.trim()
-      : preference.provider_id.trim(),
-  }
-}
-
-export function mergeModelsDevPricingPreference(
-  config: Record<string, unknown> | null | undefined,
-  preference: ModelsDevPricingPreference | null,
-): Record<string, unknown> | null {
-  const mergedConfig = { ...(config || {}) }
-  if (preference) {
-    mergedConfig[MODELS_DEV_PRICING_CONFIG_KEY] = preference
-  } else {
-    delete mergedConfig[MODELS_DEV_PRICING_CONFIG_KEY]
-  }
-  return Object.keys(mergedConfig).length > 0 ? mergedConfig : null
 }
 
 export function buildGlobalModelPriceSyncPlan(
   models: GlobalModelResponse[],
   onlineModels: ModelsDevModelItem[],
+  pricingProviderIds?: ReadonlyMap<string, string>,
 ): GlobalModelPriceSyncPlan {
   const onlineModelsByName = new Map<string, ModelsDevModelItem>()
+  const onlineModelsBySource = new Map<string, ModelsDevModelItem>()
   for (const onlineModel of onlineModels) {
     const normalizedName = onlineModel.modelId.trim().toLowerCase()
     if (!onlineModelsByName.has(normalizedName)) {
       onlineModelsByName.set(normalizedName, onlineModel)
     }
+    onlineModelsBySource.set(
+      `${onlineModel.providerId.trim().toLowerCase()}\u0000${normalizedName}`,
+      onlineModel,
+    )
   }
 
   const plan: GlobalModelPriceSyncPlan = {
     syncable: [],
     unchanged: [],
+    unsupported: [],
     unavailable: [],
   }
   for (const model of models) {
-    const onlineModel = onlineModelsByName.get(model.name.trim().toLowerCase())
-    if (!onlineModel?.tieredPricing) {
+    const normalizedName = model.name.trim().toLowerCase()
+    const sourceProviderId = pricingProviderIds?.get(model.id)?.trim().toLowerCase()
+    const onlineModel = pricingProviderIds
+      ? sourceProviderId
+        ? onlineModelsBySource.get(`${sourceProviderId}\u0000${normalizedName}`)
+        : undefined
+      : onlineModelsByName.get(normalizedName)
+    if (onlineModel?.pricingUnsupportedFields?.length) {
+      plan.unsupported.push({ model, onlineModel })
+    } else if (!onlineModel?.tieredPricing) {
       plan.unavailable.push(model)
     } else if (tieredPricingConfigsEqual(model.default_tiered_pricing, onlineModel.tieredPricing)) {
       plan.unchanged.push({ model, onlineModel })
